@@ -22,6 +22,7 @@ const STATUS_STYLES: Record<SteamStatus, string> = {
   "Active": "bg-lime-400/20 text-lime-400",
   "Expiring Soon": "bg-yellow-400/20 text-yellow-400",
   "Expired": "bg-red-400/20 text-red-400",
+  "Cancelled": "bg-zinc-500/20 text-zinc-400",
 };
 
 export function SteamStatusBadge({ status }: { status: SteamStatus }) {
@@ -63,7 +64,7 @@ export function LiveSteamAccessCard({ access }: { access: CustomerSteamAccess })
             {isPackage ? <Coins weight="fill" className="w-5 h-5 text-cyan-400" /> : <Timer weight="fill" className="w-5 h-5 text-cyan-400" />}
           </div>
           <div>
-            <div className="font-semibold text-sm text-white">{isPackage ? "Steam Package" : "Single Session"}</div>
+            <div className="font-semibold text-sm text-white">{access.serviceName || (isPackage ? "Steam Package" : "Single Session")}</div>
             <div className="text-xs text-zinc-400">
               {access.startDate ? `${new Date(access.startDate).toLocaleDateString("en-US")} – ` : ""}
               Valid until {access.endDate ? new Date(access.endDate).toLocaleDateString("en-US") : "N/A"}
@@ -71,23 +72,25 @@ export function LiveSteamAccessCard({ access }: { access: CustomerSteamAccess })
           </div>
         </div>
         <div className="text-right">
-          <SteamStatusBadge status={status as SteamStatus} />
+          <SteamStatusBadge status={status === "No Active Pass" ? "Expired" : status} />
         </div>
       </div>
 
-      <div className="grid grid-cols-3 gap-2 pt-2 border-t border-zinc-700/50 text-xs">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-2 border-t border-zinc-700/50 text-xs">
         <div className="bg-zinc-900/60 rounded-lg p-2 text-center">
           <div className="text-zinc-500 text-[10px] uppercase">Remaining</div>
-          <div className="font-black text-cyan-400 text-base">{access.remainingVisits}</div>
+          <div className="font-black text-cyan-400 text-base">{access.usageLimit === null ? "∞" : Math.max(0, access.usageLimit - access.usageCount)}</div>
         </div>
         <div className="bg-zinc-900/60 rounded-lg p-2 text-center">
           <div className="text-zinc-500 text-[10px] uppercase">Total Visits</div>
-          <div className="font-black text-white text-base">{access.totalVisits}</div>
+          <div className="font-black text-white text-base">{access.usageLimit === null ? "Unlimited" : access.totalVisits}</div>
         </div>
         <div className="bg-zinc-900/60 rounded-lg p-2 text-center">
           <div className="text-zinc-500 text-[10px] uppercase">Price</div>
-          <div className="font-black text-lime-400 text-base">{formatETB(access.price)}</div>
+          <div className="font-black text-lime-400 text-base">{formatETB(access.price)} {access.currency}</div>
         </div>
+        <div className="bg-zinc-900/60 rounded-lg p-2 text-center"><div className="text-zinc-500 text-[10px] uppercase">Payment</div><div className="font-semibold text-white">{access.paymentStatus} · {access.paymentMethod}</div></div>
+        <div className="bg-zinc-900/60 rounded-lg p-2 text-center"><div className="text-zinc-500 text-[10px] uppercase">Purchased</div><div className="font-semibold text-white">{access.createdAt.slice(0, 10)}</div></div>
       </div>
     </div>
   );

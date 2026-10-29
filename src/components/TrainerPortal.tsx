@@ -8,32 +8,28 @@ import {
   MapPin,
   Lightning,
   CheckCircle,
-  Circle,
   X,
   NotePencil,
-  Phone,
-  Envelope,
-  IdentificationBadge,
-  TrendUp,
   ClipboardText,
   WarningCircle,
   ArrowClockwise,
 } from "@phosphor-icons/react";
-import { useGym, generateId, addAudit } from "../context/GymContext";
-import type { GymClass, Trainer, TrainerClientNote } from "../types";
+import { useGym } from "../context/GymContext";
+import type { Trainer } from "../types";
 import {
   fetchTrainerProfileData,
+  getTrainerRange,
+  getTrainerToday,
+  fetchTrainerRoster,
+  updateTrainerProfile,
+  cancelTrainerSchedule,
+  recordClassAttendance,
   type TrainerProfileState,
+  type RealTrainerProfile,
   type RealTrainerSession,
   type RealTrainerTrainee,
+  type TrainerRosterItem,
 } from "../services/trainerProfileService";
-import {
-  fetchSessionRosterWithAttendance,
-  recordSessionAttendance,
-  getGymLocalDateString,
-  type SessionRosterResult,
-  type SessionAttendanceStatus,
-} from "../services/sessionAttendanceService";
 import {
   fetchTrainerNotes,
   createTrainerNote,
@@ -44,25 +40,16 @@ import { toast } from "sonner";
 type Tab = "schedule" | "trainees" | "profile";
 type Range = "today" | "all";
 
-const CATEGORY_STYLES: Record<string, string> = {
-  HIIT: "bg-red-400/10 text-red-400 border-red-400/20",
-  Strength: "bg-lime-400/10 text-lime-400 border-lime-400/20",
-  Yoga: "bg-purple-400/10 text-purple-400 border-purple-400/20",
-  Cardio: "bg-blue-400/10 text-blue-400 border-blue-400/20",
-  Boxing: "bg-orange-400/10 text-orange-400 border-orange-400/20",
-  Spin: "bg-cyan-400/10 text-cyan-400 border-cyan-400/20",
-};
-
 export default function TrainerPortal() {
   const { state } = useGym();
   const [tab, setTab] = useState<Tab>("schedule");
   const [range, setRange] = useState<Range>("all");
-  const [rosterClass, setRosterClass] = useState<GymClass | null>(null);
   const [rosterSession, setRosterSession] = useState<{
     id: string;
     title: string;
     dayOfWeek?: string | number | null;
     time?: string;
+    sessionDate?: string;
     trainerName?: string;
   } | null>(null);
 
@@ -74,34 +61,39 @@ export default function TrainerPortal() {
     let isCancelled = false;
     const currentUserId = state.currentUser?.id;
 
+    if (state.currentUser?.role !== "trainer") {
+      setProfileState({ status: "not_found", message: "Only an authenticated trainer account can use this portal." });
+      return;
+    }
     if (!currentUserId) {
       setProfileState({ status: "not_found", message: "No active user session." });
       return;
     }
 
     setProfileState({ status: "loading" });
-
-    fetchTrainerProfileData(currentUserId).then((res) => {
+    const { from, to } = getTrainerRange();
+    fetchTrainerProfileData(currentUserId, from, to).then((res) => {
       if (!isCancelled) {
         setProfileState(res);
       }
+    }).catch((error: unknown) => {
+      console.error("[TrainerPortal] Unexpected dashboard request failure", {
+        name: error instanceof Error ? error.name : "unknown",
+        message: error instanceof Error ? error.message : "unknown",
+      });
+      if (!isCancelled) setProfileState({ status: "error", error: "Trainer data could not be loaded. Check your connection and retry." });
     });
 
     return () => {
       isCancelled = true;
     };
-  }, [state.currentUser?.id, retryKey]);
+  }, [state.currentUser?.id, state.currentUser?.role, retryKey]);
 
   const handleRetry = useCallback(() => {
+    setProfileState({ status: "loading" });
     setRetryKey((prev) => prev + 1);
   }, []);
 
-  // Fallback for legacy demo trainers in local mock state (e.g. t1)
-  const mockTrainer = useMemo(() => {
-    return state.trainers.find((t) => t.id === state.currentUser?.trainerId);
-  }, [state.trainers, state.currentUser?.trainerId]);
-
-  // Resolved Trainer Object
   const trainer: Trainer | null = useMemo(() => {
     if (profileState.status === "success") {
       const p = profileState.profile;
@@ -119,15 +111,9 @@ export default function TrainerPortal() {
         weeklyHours: profileState.weeklyHours,
       };
     }
-    if (mockTrainer) {
-      return mockTrainer;
-    }
     return null;
-  }, [profileState, mockTrainer]);
+  }, [profileState]);
 
-  const todayName = useMemo(() => new Date().toLocaleDateString("en-US", { weekday: "long" }), []);
-
-  // Real database sessions if available, otherwise mock classes
   const realSessions: RealTrainerSession[] = useMemo(() => {
     if (profileState.status === "success") {
       return profileState.sessions;
@@ -142,12 +128,11 @@ export default function TrainerPortal() {
     return [];
   }, [profileState]);
 
-  const filteredSessions = useMemo(() => {
-    if (range === "today") {
-      return realSessions.filter((s) => s.days.some((d) => d.toLowerCase() === todayName.toLowerCase()));
-    }
-    return realSessions;
-  }, [realSessions, range, todayName]);
+  const [scheduleDate, setScheduleDate] = useState("");
+  const filteredSessions = useMemo(() => realSessions.filter((session) => {
+    const matchesRange = range !== "today" || session.sessionDate === getTrainerToday();
+    return matchesRange && (!scheduleDate || session.sessionDate === scheduleDate);
+  }), [realSessions, range, scheduleDate]);
 
   // Loading State
   if (profileState.status === "loading") {
@@ -162,7 +147,7 @@ export default function TrainerPortal() {
   }
 
   // Error State (distinguished from missing profile)
-  if (profileState.status === "error" && !mockTrainer) {
+  if (profileState.status === "error") {
     return (
       <div className="min-h-[100dvh] bg-zinc-950 text-white flex items-center justify-center p-4">
         <div className="max-w-md w-full text-center bg-zinc-900 border border-red-500/30 rounded-2xl p-6">
@@ -171,10 +156,23 @@ export default function TrainerPortal() {
           <p className="text-zinc-400 text-sm mb-5">{profileState.error}</p>
           <button
             onClick={handleRetry}
+            aria-label="Retry loading Trainer Portal data"
             className="inline-flex items-center gap-2 bg-lime-400 text-zinc-950 px-4 py-2.5 rounded-xl font-bold text-sm hover:bg-lime-300 transition-colors"
           >
-            <ArrowClockwise className="w-4 h-4" /> Retry
+            Retry
           </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (profileState.status === "unauthorized") {
+    return (
+      <div className="min-h-[100dvh] bg-zinc-950 text-white flex items-center justify-center p-4">
+        <div className="max-w-md w-full text-center bg-zinc-900 border border-amber-500/30 rounded-2xl p-6">
+          <WarningCircle className="w-12 h-12 text-amber-400 mx-auto mb-3" />
+          <h2 className="text-xl font-bold mb-2">Trainer Access Denied</h2>
+          <p className="text-zinc-400 text-sm">{profileState.message}</p>
         </div>
       </div>
     );
@@ -187,23 +185,25 @@ export default function TrainerPortal() {
         <div className="text-center">
           <ChalkboardTeacher className="w-16 h-16 text-zinc-600 mx-auto mb-4" />
           <h2 className="text-xl font-bold mb-2">No Trainer Profile</h2>
-          <p className="text-zinc-500">Please log in as a trainer to access this portal.</p>
+          <p className="text-zinc-500">{profileState.status === "not_found" ? profileState.message : "Please log in as a trainer to access this portal."}</p>
         </div>
       </div>
     );
   }
 
-  const totalClasses = realSessions.length > 0
-    ? realSessions.length
-    : state.classes.filter((c) => c.trainerId === trainer.id).length;
+  const totalClasses = realSessions.length;
+  const totalRoster = new Set(realTrainees.map((trainee) => trainee.id)).size;
 
-  const totalRoster = realTrainees.length > 0
-    ? realTrainees.length
-    : new Set(
-        state.classAttendees
-          .filter((a) => state.classes.some((c) => c.id === a.classId && c.trainerId === trainer.id))
-          .map((a) => a.memberId)
-      ).size;
+  const handleCancelSchedule = async (session: RealTrainerSession) => {
+    if (!window.confirm(`Cancel ${session.name} on ${session.sessionDate}?`)) return;
+    try {
+      await cancelTrainerSchedule(session.id);
+      toast.success("Schedule cancelled.");
+      handleRetry();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Unable to cancel this schedule.");
+    }
+  };
 
   return (
     <div className="min-h-[100dvh] bg-zinc-950 text-white p-4 md:p-8">
@@ -216,11 +216,12 @@ export default function TrainerPortal() {
           Welcome back, {trainer.name}. Manage your classes, trainees and schedule.
         </p>
 
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-8">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
           {[
-            { label: "My Classes / Sessions", value: String(totalClasses), icon: CalendarDots },
-            { label: "Active Trainees", value: String(totalRoster), icon: Users },
-            { label: "Weekly Hours", value: String(trainer.weeklyHours), icon: Clock },
+            { label: "Upcoming Classes", value: String(totalClasses), icon: CalendarDots },
+            { label: "Booked Members", value: String(totalRoster), icon: Users },
+            { label: "Attendance Check-ins", value: String(profileState.status === "success" ? profileState.attendanceCount : 0), icon: CheckCircle },
+            { label: "Scheduled Hours", value: String(trainer.weeklyHours), icon: Clock },
           ].map((s, i) => (
             <motion.div
               key={s.label}
@@ -262,7 +263,7 @@ export default function TrainerPortal() {
           >
             {tab === "schedule" && (
               <div className="space-y-4">
-                <div className="flex gap-2">
+                <div className="flex flex-wrap items-center gap-2">
                   {(["today", "all"] as const).map((r) => (
                     <button
                       key={r}
@@ -276,6 +277,9 @@ export default function TrainerPortal() {
                       {r === "today" ? "Today" : "This Week"}
                     </button>
                   ))}
+                  <label className="ml-auto flex items-center gap-2 text-xs text-zinc-400">Filter date
+                    <input type="date" value={scheduleDate} onChange={(event) => setScheduleDate(event.target.value)} className="rounded-lg border border-zinc-700 bg-zinc-900 px-2.5 py-1.5 text-white" />
+                  </label>
                 </div>
 
                 {/* Real database sessions */}
@@ -301,7 +305,7 @@ export default function TrainerPortal() {
                             <div className="flex items-center gap-2 mb-1 flex-wrap">
                               <h3 className="font-bold text-lg">{s.name}</h3>
                               <span className="text-[10px] px-2 py-0.5 rounded-full font-bold border bg-lime-400/10 text-lime-400 border-lime-400/20">
-                                Aerobics & Group
+                                Class
                               </span>
                               <span className="text-[10px] px-2 py-0.5 rounded-full font-bold bg-zinc-800 text-zinc-400">
                                 {s.status}
@@ -313,7 +317,7 @@ export default function TrainerPortal() {
                             <div className="flex flex-wrap gap-x-5 gap-y-1 text-sm text-zinc-400">
                               <span className="flex items-center gap-1.5">
                                 <CalendarDots className="w-4 h-4 text-lime-400" />
-                                {s.days.join(", ")}
+                                {s.sessionDate}
                               </span>
                               <span className="flex items-center gap-1.5">
                                 <Clock className="w-4 h-4 text-lime-400" />
@@ -338,7 +342,7 @@ export default function TrainerPortal() {
                               />
                             </div>
                             <div className="text-xs text-zinc-500">
-                              {s.durationHours} hr session
+                              {s.durationHours.toFixed(1)} hr session · {s.attendanceCount} check-ins
                             </div>
                             <button
                               onClick={() =>
@@ -347,6 +351,7 @@ export default function TrainerPortal() {
                                   title: s.name,
                                   dayOfWeek: s.days?.join(", ") || "",
                                   time: s.timeSlot,
+                                  sessionDate: s.sessionDate,
                                   trainerName: trainer.name,
                                 })
                               }
@@ -355,6 +360,7 @@ export default function TrainerPortal() {
                               <ClipboardText className="w-4 h-4" />
                               Take Attendance
                             </button>
+                            {s.active && new Date(s.startAt).getTime() > Date.now() && <button onClick={() => void handleCancelSchedule(s)} className="rounded-xl border border-red-400/30 bg-red-400/10 px-3.5 py-1.5 text-xs font-bold text-red-300 hover:bg-red-400/20">Cancel schedule</button>}
                           </div>
                         </div>
                       </motion.div>
@@ -380,10 +386,7 @@ export default function TrainerPortal() {
             )}
 
             {tab === "profile" && (
-              <ProfileView
-                trainer={trainer}
-                sessions={realSessions}
-              />
+              <ProfileView trainer={trainer} sessions={realSessions} onSaved={(profile) => setProfileState((current) => current.status === "success" ? { ...current, profile } : current)} />
             )}
           </motion.div>
         </AnimatePresence>
@@ -391,18 +394,6 @@ export default function TrainerPortal() {
 
       <AnimatePresence>
         {rosterSession && <RosterDrawer session={rosterSession} onClose={() => setRosterSession(null)} />}
-        {rosterClass && (
-          <RosterDrawer
-            session={{
-              id: rosterClass.id,
-              title: rosterClass.title,
-              dayOfWeek: rosterClass.dayOfWeek,
-              time: rosterClass.time,
-              trainerName: rosterClass.trainerName,
-            }}
-            onClose={() => setRosterClass(null)}
-          />
-        )}
       </AnimatePresence>
     </div>
   );
@@ -417,92 +408,52 @@ function RosterDrawer({
     title: string;
     dayOfWeek?: string | number | null;
     time?: string;
+    sessionDate?: string;
     trainerName?: string;
   };
   onClose: () => void;
 }) {
-  const { dispatch } = useGym();
-  const [selectedDate, setSelectedDate] = useState(() => getGymLocalDateString());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [rosterResult, setRosterResult] = useState<SessionRosterResult | null>(null);
+  const [rosterItems, setRosterItems] = useState<TrainerRosterItem[] | null>(null);
   const [savingIds, setSavingIds] = useState<Set<string>>(new Set());
 
   const loadRoster = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetchSessionRosterWithAttendance(session.id, selectedDate);
-      setRosterResult(res);
-    } catch (err: any) {
+      setRosterItems(await fetchTrainerRoster(session.id));
+    } catch (err: unknown) {
       console.error("[RosterDrawer] Failed to load attendance:", err);
-      setError(err?.message || "Failed to load session roster and attendance.");
+      setError(err instanceof Error ? err.message : "Failed to load session roster and attendance.");
     } finally {
       setLoading(false);
     }
-  }, [session.id, selectedDate]);
+  }, [session.id]);
 
   useEffect(() => {
     loadRoster();
   }, [loadRoster]);
 
   const handleUpdate = async (
-    traineeId: string,
+    bookingId: string,
     traineeName: string,
-    targetStatus: SessionAttendanceStatus
+    targetStatus: "ATTENDED" | "NO_SHOW"
   ) => {
-    if (savingIds.has(traineeId)) return;
+    if (savingIds.has(bookingId)) return;
 
-    setSavingIds((prev) => new Set(prev).add(traineeId));
+    setSavingIds((prev) => new Set(prev).add(bookingId));
     try {
-      const saved = await recordSessionAttendance({
-        sessionId: session.id,
-        customerId: traineeId,
-        attendanceDate: selectedDate,
-        status: targetStatus,
-      });
-
-      setRosterResult((prev) => {
-        if (!prev) return prev;
-        const updatedItems = prev.items.map((item) => {
-          if (item.trainee.id !== traineeId) return item;
-          return {
-            ...item,
-            status: saved.status,
-            recordId: saved.id,
-            recordedAt: saved.recordedAt,
-            notes: saved.notes,
-          };
-        });
-
-        const presentCount = updatedItems.filter((i) => i.status === "PRESENT").length;
-        const absentCount = updatedItems.filter((i) => i.status === "ABSENT").length;
-        const unrecordedCount = updatedItems.filter((i) => i.status === "UNRECORDED").length;
-
-        return {
-          ...prev,
-          items: updatedItems,
-          presentCount,
-          absentCount,
-          unrecordedCount,
-        };
-      });
-
-      addAudit(
-        dispatch,
-        "Session Attendance Recorded",
-        session.trainerName || "Trainer",
-        `${traineeName} marked ${targetStatus} for ${session.title} (${selectedDate})`
-      );
-
+      await recordClassAttendance(bookingId, targetStatus);
+      await loadRoster();
       toast.success(`${traineeName} marked ${targetStatus.toLowerCase()}`);
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error("[RosterDrawer] Save error:", err);
-      toast.error(err?.message || `Failed to record attendance for ${traineeName}.`);
+      toast.error(err instanceof Error ? err.message : `Failed to record attendance for ${traineeName}.`);
     } finally {
       setSavingIds((prev) => {
         const next = new Set(prev);
-        next.delete(traineeId);
+        next.delete(bookingId);
         return next;
       });
     }
@@ -538,18 +489,9 @@ function RosterDrawer({
           </button>
         </div>
 
-        {/* Date Selector & Refresh */}
+        {/* Refresh the schedule roster */}
         <div className="flex items-center justify-between gap-3 mb-5 bg-zinc-950/60 p-3 rounded-xl border border-zinc-800">
-          <div className="flex items-center gap-2 text-xs text-zinc-400">
-            <CalendarDots className="w-4 h-4 text-lime-400" />
-            <span>Date:</span>
-            <input
-              type="date"
-              value={selectedDate}
-              onChange={(e) => setSelectedDate(e.target.value)}
-              className="bg-zinc-900 border border-zinc-700 text-white text-xs rounded-lg px-2.5 py-1 focus:outline-none focus:border-lime-400"
-            />
-          </div>
+          <div className="flex items-center gap-2 text-xs text-zinc-400"><CalendarDots className="w-4 h-4 text-lime-400" />{session.dayOfWeek ?? "Scheduled class"} · {session.sessionDate ?? ""}</div>
           <button
             onClick={() => loadRoster()}
             disabled={loading}
@@ -576,7 +518,7 @@ function RosterDrawer({
               Retry
             </button>
           </div>
-        ) : !rosterResult || rosterResult.items.length === 0 ? (
+        ) : !rosterItems || rosterItems.length === 0 ? (
           <div className="text-center py-8">
             <Users className="w-10 h-10 text-zinc-600 mx-auto mb-3" />
             <p className="text-zinc-500 text-sm">No members enrolled in this session yet.</p>
@@ -584,76 +526,72 @@ function RosterDrawer({
         ) : (
           <div className="space-y-3">
             <div className="flex items-center justify-between mb-4 px-1">
-              <span className="text-sm text-zinc-400">
-                <strong className="text-white">{rosterResult.presentCount}</strong> / {rosterResult.totalEnrolled} present
-                {rosterResult.absentCount > 0 && (
-                  <span className="ml-1 text-zinc-500">({rosterResult.absentCount} absent)</span>
-                )}
-                {rosterResult.unrecordedCount > 0 && (
-                  <span className="ml-1 text-amber-400/80">({rosterResult.unrecordedCount} unrecorded)</span>
-                )}
-              </span>
+              {(() => {
+                const attended = rosterItems.filter(item => item.bookingStatus.toUpperCase() === "ATTENDED").length;
+                const noShow = rosterItems.filter(item => item.bookingStatus.toUpperCase() === "NO_SHOW").length;
+                return <span className="text-sm text-zinc-400"><strong className="text-white">{attended}</strong> / {rosterItems.length} attended <span className="ml-1 text-zinc-500">({noShow} no-show)</span></span>;
+              })()}
               <span className="text-xs text-lime-400 font-semibold">
-                {rosterResult.totalEnrolled > 0
-                  ? `${Math.round((rosterResult.presentCount / rosterResult.totalEnrolled) * 100)}%`
+                {rosterItems.length > 0
+                  ? `${Math.round((rosterItems.filter(item => item.bookingStatus.toUpperCase() === "ATTENDED").length / rosterItems.length) * 100)}%`
                   : "0%"}
               </span>
             </div>
 
-            {rosterResult.items.map((item) => {
-              const isSaving = savingIds.has(item.trainee.id);
-              const isPresent = item.status === "PRESENT";
-              const isAbsent = item.status === "ABSENT";
-              const isUnrecorded = item.status === "UNRECORDED";
+            {rosterItems.map((item) => {
+              const isSaving = savingIds.has(item.bookingId);
+              const isAttended = item.bookingStatus.toUpperCase() === "ATTENDED";
+              const isNoShow = item.bookingStatus.toUpperCase() === "NO_SHOW";
+              const finalized = isAttended || isNoShow;
 
               return (
                 <div
-                  key={item.trainee.id}
+                  key={item.bookingId}
                   className="flex items-center justify-between bg-zinc-800/50 border border-zinc-700/50 rounded-xl p-3 hover:border-zinc-600 transition-colors"
                 >
                   <div className="min-w-0 pr-2">
                     <div className="flex items-center gap-1.5 flex-wrap">
-                      <span className="font-semibold text-sm truncate">{item.trainee.fullName}</span>
+                      <span className="font-semibold text-sm truncate">{item.fullName}</span>
                       <span className="text-[10px] px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-400 font-mono">
-                        {item.trainee.customerCode}
+                        {item.customerCode}
                       </span>
-                      {isUnrecorded && (
-                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-400/10 text-amber-400 border border-amber-400/20 font-medium">
-                          Unrecorded
+                      {!item.membershipValid && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-red-400/10 text-red-300 border border-red-400/20 font-medium">
+                          Membership invalid
                         </span>
                       )}
                     </div>
                     <div className="text-xs text-zinc-500 mt-0.5 truncate">
-                      {item.trainee.phone || item.trainee.email || "No contact"}
+                      {item.bookingStatus} · Member through {item.membershipEndDate || "no active membership"}
                     </div>
                   </div>
 
                   <div className="flex items-center gap-1.5 shrink-0">
                     <button
-                      disabled={isSaving}
-                      onClick={() => handleUpdate(item.trainee.id, item.trainee.fullName, "PRESENT")}
-                      title="Mark Present"
+                      disabled={isSaving || finalized || !item.membershipValid || ["BLOCKED", "SUSPENDED"].includes(item.customerStatus.toUpperCase())}
+                      onClick={() => handleUpdate(item.bookingId, item.fullName, "ATTENDED")}
+                      title="Mark Attended"
                       className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-bold transition-all ${
-                        isPresent
+                        isAttended
                           ? "bg-lime-400 text-zinc-950 shadow-sm"
                           : "bg-zinc-800 text-zinc-400 hover:bg-zinc-700 hover:text-zinc-200"
                       } ${isSaving ? "opacity-50 cursor-not-allowed" : ""}`}
                     >
-                      <CheckCircle weight={isPresent ? "fill" : "bold"} className="w-4 h-4" />
-                      <span>Present</span>
+                      <CheckCircle weight={isAttended ? "fill" : "bold"} className="w-4 h-4" />
+                      <span>Attended</span>
                     </button>
                     <button
-                      disabled={isSaving}
-                      onClick={() => handleUpdate(item.trainee.id, item.trainee.fullName, "ABSENT")}
-                      title="Mark Absent"
+                      disabled={isSaving || finalized || !item.membershipValid || ["BLOCKED", "SUSPENDED"].includes(item.customerStatus.toUpperCase())}
+                      onClick={() => handleUpdate(item.bookingId, item.fullName, "NO_SHOW")}
+                      title="Mark No Show"
                       className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-bold transition-all ${
-                        isAbsent
+                        isNoShow
                           ? "bg-red-500/20 text-red-400 border border-red-500/40"
                           : "bg-zinc-800 text-zinc-400 hover:bg-zinc-700 hover:text-zinc-200"
                       } ${isSaving ? "opacity-50 cursor-not-allowed" : ""}`}
                     >
-                      <X weight={isAbsent ? "bold" : "regular"} className="w-4 h-4" />
-                      <span>Absent</span>
+                      <X weight={isNoShow ? "bold" : "regular"} className="w-4 h-4" />
+                      <span>No Show</span>
                     </button>
                   </div>
                 </div>
@@ -675,13 +613,7 @@ function TraineesView({
   realTrainees: RealTrainerTrainee[];
   totalRoster: number;
 }) {
-  const { state, dispatch } = useGym();
-
-  // If real trainees exist from database, use them; otherwise fallback to local mock trainees
-  const hasRealTrainees = realTrainees.length > 0;
-  const [selectedId, setSelectedId] = useState<string | null>(
-    hasRealTrainees ? realTrainees[0]?.id : trainer.clientIds[0] ?? null
-  );
+  const [selectedId, setSelectedId] = useState<string | null>(realTrainees[0]?.id ?? null);
 
   const [focus, setFocus] = useState("");
   const [notes, setNotes] = useState("");
@@ -690,8 +622,7 @@ function TraineesView({
   const [notesError, setNotesError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
 
-  const selectedReal = hasRealTrainees ? realTrainees.find((t) => t.id === selectedId) : null;
-  const selectedMock = !hasRealTrainees ? state.members.find((m) => m.id === selectedId) : null;
+  const selectedReal = realTrainees.find((trainee) => trainee.id === selectedId) ?? null;
 
   const loadNotes = useCallback(async (customerId: string) => {
     setLoadingNotes(true);
@@ -699,9 +630,9 @@ function TraineesView({
     try {
       const records = await fetchTrainerNotes(customerId);
       setCoachingNotes(records);
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error("[TrainerPortal] Failed to load coaching notes:", err);
-      setNotesError(err?.message || "Failed to load coaching notes from database.");
+      setNotesError(err instanceof Error ? err.message : "Failed to load coaching notes from database.");
     } finally {
       setLoadingNotes(false);
     }
@@ -722,7 +653,7 @@ function TraineesView({
       return;
     }
 
-    const traineeName = selectedReal?.fullName || selectedMock?.name || "Trainee";
+    const traineeName = selectedReal?.fullName || "Trainee";
     setIsSaving(true);
     try {
       const savedNote = await createTrainerNote({
@@ -733,13 +664,12 @@ function TraineesView({
       });
 
       setCoachingNotes((prev) => [savedNote, ...prev]);
-      addAudit(dispatch, "Trainer Note Added", trainer.name, `Logged coaching note for ${traineeName}`);
       toast.success("Coaching note saved successfully");
       setFocus("");
       setNotes("");
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error("[TrainerPortal] Error saving coaching note:", err);
-      toast.error(err?.message || `Failed to save coaching note for ${traineeName}.`);
+      toast.error(err instanceof Error ? err.message : `Failed to save coaching note for ${traineeName}.`);
     } finally {
       setIsSaving(false);
     }
@@ -753,10 +683,10 @@ function TraineesView({
           <span className="text-xs text-zinc-500 font-normal">({totalRoster} enrolled)</span>
         </h3>
 
-        {hasRealTrainees ? (
+        {realTrainees.length > 0 ? (
           realTrainees.map((c) => (
             <button
-              key={c.id}
+              key={`${c.id}-${c.sessionId}`}
               onClick={() => setSelectedId(c.id)}
               className={`w-full text-left rounded-xl p-3 border transition-colors ${
                 selectedId === c.id
@@ -770,25 +700,6 @@ function TraineesView({
               </div>
             </button>
           ))
-        ) : trainer.clientIds.length > 0 ? (
-          state.members
-            .filter((m) => trainer.clientIds.includes(m.id))
-            .map((c) => (
-              <button
-                key={c.id}
-                onClick={() => setSelectedId(c.id)}
-                className={`w-full text-left rounded-xl p-3 border transition-colors ${
-                  selectedId === c.id
-                    ? "bg-lime-400/10 border-lime-400/40"
-                    : "bg-zinc-900 border-zinc-800 hover:border-zinc-700"
-                }`}
-              >
-                <div className="font-semibold text-sm">{c.name}</div>
-                <div className="text-xs text-zinc-500">
-                  {c.memberId} · {c.phone}
-                </div>
-              </button>
-            ))
         ) : (
           <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6 text-center">
             <Users className="w-8 h-8 text-zinc-600 mx-auto mb-2" />
@@ -798,7 +709,7 @@ function TraineesView({
       </div>
 
       <div className="md:col-span-2 space-y-4">
-        {(selectedReal || selectedMock) ? (
+        {selectedReal ? (
           <>
             <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-5">
               <div className="flex items-center justify-between flex-wrap gap-2">
@@ -808,24 +719,15 @@ function TraineesView({
                   </div>
                   <div>
                     <div className="font-bold text-lg">
-                      {selectedReal ? selectedReal.fullName : selectedMock?.name}
+                      {selectedReal.fullName}
                     </div>
                     <div className="text-sm text-zinc-500">
-                      {selectedReal
-                        ? `${selectedReal.customerCode} · Enrolled in ${selectedReal.sessionName}`
-                        : `${selectedMock?.memberId} · Member since ${selectedMock?.joinDate}`}
+                      {selectedReal.customerCode} · Enrolled in {selectedReal.sessionName}
                     </div>
                   </div>
                 </div>
-                <div className="text-right text-sm">
-                  <div className="flex items-center gap-1.5 text-zinc-400">
-                    <Phone className="w-4 h-4 text-lime-400" />
-                    {selectedReal ? selectedReal.phone || "—" : selectedMock?.phone}
-                  </div>
-                  <div className="flex items-center gap-1.5 text-zinc-400">
-                    <Envelope className="w-4 h-4 text-lime-400" />
-                    {selectedReal ? selectedReal.email || "—" : selectedMock?.email}
-                  </div>
+                <div className="text-right text-sm text-zinc-400">
+                  Member through {selectedReal.membershipEndDate || "no active membership"}
                 </div>
               </div>
             </div>
@@ -928,91 +830,53 @@ function TraineesView({
   );
 }
 
-function ProfileView({
-  trainer,
-  sessions,
-}: {
-  trainer: Trainer;
-  sessions: RealTrainerSession[];
-}) {
+function ProfileView({ trainer, sessions, onSaved }: { trainer: Trainer; sessions: RealTrainerSession[]; onSaved: (profile: RealTrainerProfile) => void }) {
+  const [firstName, setFirstName] = useState(trainer.name.split(/\s+/)[0] ?? "");
+  const [lastName, setLastName] = useState(trainer.name.split(/\s+/).slice(1).join(" "));
+  const [phone, setPhone] = useState(trainer.phone === "—" ? "" : trainer.phone);
+  const [specialization, setSpecialization] = useState(trainer.specialties.join(", "));
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const save = async () => {
+    setSaving(true);
+    setError(null);
+    try {
+      const profile = await updateTrainerProfile({ firstName, lastName, phone, specialization });
+      onSaved(profile);
+      toast.success("Trainer profile saved.");
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : "Unable to update your profile.";
+      setError(message);
+      toast.error(message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const inputClass = "w-full rounded-xl border border-zinc-700 bg-zinc-800 px-3 py-2.5 text-sm text-white focus:border-lime-400/60 focus:outline-none";
   return (
     <div className="max-w-2xl space-y-4">
       <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6">
         <div className="flex items-center gap-4 mb-4">
-          <div className="w-16 h-16 bg-lime-400/10 rounded-full flex items-center justify-center">
-            <ChalkboardTeacher weight="fill" className="w-8 h-8 text-lime-400" />
-          </div>
-          <div>
-            <h3 className="text-xl font-bold flex items-center gap-2">
-              {trainer.name}{" "}
-              {trainer.active && (
-                <span className="text-[10px] px-2 py-0.5 rounded-full bg-lime-400/20 text-lime-400 font-bold">
-                  ACTIVE
-                </span>
-              )}
-            </h3>
-            <p className="text-zinc-500 text-sm">{trainer.bio || "Personal trainer at Power Plus Gym."}</p>
-          </div>
+          <div className="w-16 h-16 bg-lime-400/10 rounded-full flex items-center justify-center"><ChalkboardTeacher weight="fill" className="w-8 h-8 text-lime-400" /></div>
+          <div><h3 className="text-xl font-bold flex items-center gap-2">{trainer.name}<span className="text-[10px] px-2 py-0.5 rounded-full bg-lime-400/20 text-lime-400 font-bold">ACTIVE</span></h3><p className="text-zinc-500 text-sm">Trainer profile and class schedule</p></div>
         </div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
-          <div className="flex items-center gap-2 text-zinc-400">
-            <Envelope className="w-4 h-4 text-lime-400" />
-            {trainer.email}
-          </div>
-          <div className="flex items-center gap-2 text-zinc-400">
-            <Phone className="w-4 h-4 text-lime-400" />
-            {trainer.phone}
-          </div>
-          <div className="flex items-center gap-2 text-zinc-400">
-            <IdentificationBadge className="w-4 h-4 text-lime-400" />
-            Trainer ID: {trainer.id.slice(0, 8)}...
-          </div>
-          <div className="flex items-center gap-2 text-zinc-400">
-            <Clock className="w-4 h-4 text-lime-400" />
-            {trainer.weeklyHours} hrs / week
-          </div>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <label className="text-xs text-zinc-400">First name<input className={inputClass} value={firstName} onChange={event => setFirstName(event.target.value)} maxLength={100} /></label>
+          <label className="text-xs text-zinc-400">Last name<input className={inputClass} value={lastName} onChange={event => setLastName(event.target.value)} maxLength={100} /></label>
+          <label className="text-xs text-zinc-400">Phone<input className={inputClass} value={phone} onChange={event => setPhone(event.target.value)} maxLength={40} /></label>
+          <label className="text-xs text-zinc-400">Specialization<input className={inputClass} value={specialization} onChange={event => setSpecialization(event.target.value)} maxLength={200} /></label>
+          <div className="text-xs text-zinc-400">Email<div className="mt-2 text-sm text-zinc-200">{trainer.email}</div></div>
+          <div className="text-xs text-zinc-400">Trainer profile ID<div className="mt-2 font-mono text-sm text-zinc-200">{trainer.id}</div></div>
         </div>
-        <div className="mt-4">
-          <div className="text-xs text-zinc-500 mb-2 uppercase tracking-wide">Specialties</div>
-          <div className="flex flex-wrap gap-2">
-            {trainer.specialties.map((s) => (
-              <span
-                key={s}
-                className={`text-xs px-3 py-1.5 rounded-full border font-semibold ${
-                  CATEGORY_STYLES[s] || "bg-zinc-800 text-zinc-300 border-zinc-700"
-                }`}
-              >
-                {s}
-              </span>
-            ))}
-          </div>
-        </div>
+        {error && <p role="alert" className="mt-3 text-sm text-red-300">{error}</p>}
+        <button disabled={saving} onClick={() => void save()} className="mt-5 rounded-xl bg-lime-400 px-4 py-2.5 font-bold text-zinc-950 disabled:opacity-50">{saving ? "Saving..." : "Save profile"}</button>
       </div>
-
       <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6">
-        <h4 className="font-bold mb-3">Weekly Teaching Load</h4>
+        <h4 className="font-bold mb-3">Upcoming class load · {trainer.weeklyHours} hours</h4>
         <div className="space-y-2">
-          {sessions.length > 0 ? (
-            sessions.map((s) => (
-              <div
-                key={s.id}
-                className="flex justify-between items-center py-2 border-b border-zinc-800/50 text-sm last:border-b-0"
-              >
-                <span className="flex items-center gap-2">
-                  <span className="w-2 h-2 bg-lime-400 rounded-full" />
-                  {s.name}
-                </span>
-                <span className="text-zinc-500">
-                  {s.days.join(", ")} · {s.timeSlot}
-                </span>
-              </div>
-            ))
-          ) : (
-            <div className="text-center py-4">
-              <CalendarDots className="w-8 h-8 text-zinc-600 mx-auto mb-2" />
-              <p className="text-zinc-500 text-sm">No sessions assigned in the database.</p>
-            </div>
-          )}
+          {sessions.length ? sessions.map(session => <div key={session.id} className="flex justify-between gap-3 border-b border-zinc-800/50 py-2 text-sm last:border-b-0"><span>{session.name}</span><span className="text-right text-zinc-500">{session.sessionDate} · {session.timeSlot}</span></div>) : <p className="py-4 text-center text-sm text-zinc-500">No classes scheduled in the next seven days.</p>}
         </div>
       </div>
     </div>

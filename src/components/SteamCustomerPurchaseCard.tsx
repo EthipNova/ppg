@@ -3,21 +3,18 @@ import {
   Drop,
   Coins,
   Timer,
-  CreditCard,
   UploadSimple,
   CheckCircle,
   Hourglass,
   Trash,
   ArrowClockwise,
   Sparkle,
-  Warning,
   XCircle,
   Info,
-  Calendar,
 } from "@phosphor-icons/react";
 import { formatETB } from "../context/GymContext";
 import {
-  STEAM_CATALOG,
+  fetchSteamCatalog,
   fetchCustomerPendingSteamPayment,
   submitSteamPaymentProof,
   validateProofFile,
@@ -36,12 +33,6 @@ const PAYMENT_METHODS: { id: PaymentMethod; label: string; requiresProof: boolea
   { id: "telebirr", label: "Telebirr", requiresProof: true },
 ];
 
-const METHOD_LABELS: Record<PaymentMethod, string> = {
-  cash: "Cash (Reception)",
-  cbe_birr: "CBE",
-  telebirr: "Telebirr",
-};
-
 interface SteamCustomerPurchaseCardProps {
   customerId: string;
   customerCode?: string;
@@ -59,7 +50,9 @@ export default function SteamCustomerPurchaseCard({
   activePassRemainingVisits = 0,
   onPurchaseSubmitted,
 }: SteamCustomerPurchaseCardProps) {
-  const [selectedProductId, setSelectedProductId] = useState<string>(STEAM_CATALOG[1].id); // Default to 10-visit package
+  const [selectedProductId, setSelectedProductId] = useState("");
+  const [catalog, setCatalog] = useState<SteamCatalogItem[]>([]);
+  const [loadingCatalog, setLoadingCatalog] = useState(true);
   const [method, setMethod] = useState<PaymentMethod>("cbe_birr");
   const [showReceptionModal, setShowReceptionModal] = useState(false);
 
@@ -76,7 +69,7 @@ export default function SteamCustomerPurchaseCard({
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  const selectedProduct = STEAM_CATALOG.find(p => p.id === selectedProductId) || STEAM_CATALOG[1];
+  const selectedProduct = catalog.find(p => p.id === selectedProductId) ?? catalog[0];
 
   // Load existing pending Steam payment for this customer
   const checkPendingPayment = useCallback(async () => {
@@ -89,6 +82,18 @@ export default function SteamCustomerPurchaseCard({
   useEffect(() => {
     checkPendingPayment();
   }, [checkPendingPayment]);
+
+  useEffect(() => {
+    let active = true;
+    void fetchSteamCatalog().then(items => {
+      if (!active) return;
+      setCatalog(items);
+      setSelectedProductId(current => items.some(item => item.id === current) ? current : items[0]?.id ?? "");
+    }).catch(cause => {
+      if (active) setSubmitError(cause instanceof Error ? cause.message : "Unable to load Steam services.");
+    }).finally(() => { if (active) setLoadingCatalog(false); });
+    return () => { active = false; };
+  }, []);
 
   // Clean up Object URL on unmount or file change
   useEffect(() => {
@@ -137,6 +142,11 @@ export default function SteamCustomerPurchaseCard({
       return;
     }
 
+    if (!selectedProduct) {
+      setSubmitError("No active Steam service is available at this time.");
+      return;
+    }
+
     if (!proofFile) {
       setProofError("Please select a screenshot of your payment transfer.");
       return;
@@ -155,7 +165,6 @@ export default function SteamCustomerPurchaseCard({
       customerId,
       serviceId: selectedProduct.id,
       productType: selectedProduct.type,
-      amount: selectedProduct.price,
       paymentMethod: method,
       file: proofFile,
     });
@@ -177,7 +186,7 @@ export default function SteamCustomerPurchaseCard({
   };
 
   // 1. Loading pending state spinner
-  if (loadingPending) {
+  if (loadingPending || loadingCatalog) {
     return (
       <div className={`${CARD} py-8 text-center text-zinc-400`}>
         <div className="inline-block animate-spin w-6 h-6 border-2 border-cyan-400 border-t-transparent rounded-full mb-2" />
@@ -213,7 +222,7 @@ export default function SteamCustomerPurchaseCard({
         <div className="bg-zinc-800/60 rounded-xl p-4 space-y-2.5 text-xs border border-zinc-700/60">
           <div className="flex justify-between items-center">
             <span className="text-zinc-400">Selected Product</span>
-            <span className="font-semibold text-white">{pendingPayment.productName} ({pendingPayment.visits} sessions)</span>
+            <span className="font-semibold text-white">{pendingPayment.productName} ({pendingPayment.visits ? `${pendingPayment.visits} sessions` : "usage as configured"})</span>
           </div>
           <div className="flex justify-between items-center">
             <span className="text-zinc-400">Amount</span>
@@ -251,6 +260,10 @@ export default function SteamCustomerPurchaseCard({
     );
   }
 
+  if (catalog.length === 0) {
+    return <div className={`${CARD} text-center`}><p className="font-semibold text-white">No Steam services are currently available.</p><p className="mt-2 text-sm text-zinc-400">Please ask reception for assistance.</p>{submitError && <p className="mt-2 text-xs text-red-300">{submitError}</p>}</div>;
+  }
+
   // 3. Interactive Customer Purchase Flow
   return (
     <div className={`${CARD} space-y-5`}>
@@ -277,7 +290,7 @@ export default function SteamCustomerPurchaseCard({
           1. Select Product
         </label>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          {STEAM_CATALOG.map(item => {
+          {catalog.map(item => {
             const isSelected = item.id === selectedProductId;
             const isPackage = item.type === "package";
             return (
@@ -315,7 +328,7 @@ export default function SteamCustomerPurchaseCard({
 
                 <div className="border-t border-zinc-800/70 pt-2 flex items-baseline justify-between">
                   <div className="text-xs font-medium text-zinc-400">
-                    {item.visits} {item.visits === 1 ? "session" : "sessions"}
+                    {item.visits === 0 ? "Usage as configured" : `${item.visits} ${item.visits === 1 ? "session" : "sessions"}`}
                   </div>
                   <div className="text-base font-black text-cyan-400">
                     {formatETB(item.price)}
@@ -365,7 +378,7 @@ export default function SteamCustomerPurchaseCard({
             onClick={() => setShowReceptionModal(true)}
             className="w-full bg-cyan-400 hover:bg-cyan-300 text-zinc-950 font-bold py-3 rounded-xl transition text-xs flex items-center justify-center gap-2"
           >
-            View Reception Payment Instructions ({formatETB(selectedProduct.price)})
+            View Reception Payment Instructions ({formatETB(selectedProduct?.price ?? 0)})
           </button>
         </div>
       )}
@@ -377,7 +390,7 @@ export default function SteamCustomerPurchaseCard({
           <div className="bg-zinc-800/40 border border-zinc-700/60 rounded-xl p-3.5 text-xs space-y-1.5">
             <div className="font-bold text-white flex items-center justify-between">
               <span>{method === "cbe_birr" ? "Commercial Bank of Ethiopia (CBE)" : "Telebirr"}</span>
-              <span className="text-cyan-400 font-bold">{formatETB(selectedProduct.price)}</span>
+              <span className="text-cyan-400 font-bold">{formatETB(selectedProduct?.price ?? 0)}</span>
             </div>
             {method === "cbe_birr" ? (
               <div className="text-zinc-400 space-y-0.5 text-[11px]">
@@ -391,7 +404,7 @@ export default function SteamCustomerPurchaseCard({
               </div>
             )}
             <p className="text-[11px] text-zinc-500 pt-1 border-t border-zinc-800">
-              Please transfer exactly {formatETB(selectedProduct.price)} and attach your payment confirmation screenshot below.
+              Please transfer exactly {formatETB(selectedProduct?.price ?? 0)} and attach your payment confirmation screenshot below.
             </p>
           </div>
 
@@ -475,7 +488,7 @@ export default function SteamCustomerPurchaseCard({
             ) : (
               <>
                 <UploadSimple weight="bold" className="w-4 h-4" />
-                Submit Payment Proof ({formatETB(selectedProduct.price)})
+                Submit Payment Proof ({formatETB(selectedProduct?.price ?? 0)})
               </>
             )}
           </button>
@@ -483,7 +496,7 @@ export default function SteamCustomerPurchaseCard({
       )}
 
       {/* Cash Reception Instructions Modal */}
-      {showReceptionModal && (
+      {showReceptionModal && selectedProduct && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
           <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6 w-full max-w-md space-y-4">
             <div className="flex items-center gap-3">
@@ -503,11 +516,11 @@ export default function SteamCustomerPurchaseCard({
               </div>
               <div className="flex justify-between">
                 <span className="text-zinc-400">Steam Product</span>
-                <span className="font-semibold text-cyan-400">{selectedProduct.name} ({selectedProduct.visits} sessions)</span>
+                <span className="font-semibold text-cyan-400">{selectedProduct?.name} ({selectedProduct?.visits === 0 ? "usage as configured" : `${selectedProduct?.visits} sessions`})</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-zinc-400">Amount Due</span>
-                <span className="font-black text-white text-sm">{formatETB(selectedProduct.price)}</span>
+                <span className="font-black text-white text-sm">{formatETB(selectedProduct?.price ?? 0)}</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-zinc-400">Method</span>

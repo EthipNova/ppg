@@ -10,10 +10,8 @@ import {
   Warning,
   XCircle,
   X,
-  ChartBar,
   ArrowsClockwise,
   User,
-  Clock,
 } from "@phosphor-icons/react";
 import { toast } from "sonner";
 import {
@@ -24,7 +22,7 @@ import {
 } from "../context/GymContext";
 import type { Locker, LockerSection, LockerStatus } from "../types";
 import { useLockers } from "../hooks/use-lockers";
-import { assignLocker, createLocker, createLockers, loseLockerKey, returnLockerAssignment, updateLockerStatus } from "../services/lockers";
+import { assignLocker, createLocker, createLockers, editLocker, loseLockerKey, returnLockerAssignment, setLockerCondition } from "../services/lockers";
 
 const SECTIONS: LockerSection[] = ["Men", "Women", "VIP", "General"];
 
@@ -53,7 +51,7 @@ const inputClass =
   "w-full bg-zinc-800 border border-zinc-700 rounded-xl px-4 py-3 text-white placeholder-zinc-500 focus:outline-none focus:border-lime-400/60 transition-colors";
 const labelClass = "text-xs font-bold uppercase tracking-wide text-zinc-500 mb-1.5 block";
 
-export default function LockersManagement() {
+export default function LockersManagement({ canManage = false }: { canManage?: boolean }) {
   const { state } = useGym();
   const t = useT();
   const lockerData = useLockers();
@@ -61,7 +59,7 @@ export default function LockersManagement() {
   const actor = state.currentUser?.name ?? "Reception";
 
   const [search, setSearch] = useState("");
-  const [statusFilter, setStatusFilter] = useState<"ALL" | LockerStatus>("ALL");
+  const [statusFilter, setStatusFilter] = useState<"ALL" | LockerStatus | "INACTIVE">("ALL");
   const [sectionFilter, setSectionFilter] = useState<"ALL" | LockerSection>("ALL");
   const [selected, setSelected] = useState<Locker | null>(null);
   const [showAdd, setShowAdd] = useState(false);
@@ -71,7 +69,7 @@ export default function LockersManagement() {
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     return lockerData.lockers
-      .filter(l => statusFilter === "ALL" || l.status === statusFilter)
+      .filter(l => statusFilter === "ALL" || (statusFilter === "INACTIVE" ? l.isActive === false : l.isActive !== false && l.status === statusFilter))
       .filter(l => sectionFilter === "ALL" || l.section === sectionFilter)
       .filter(l => {
         if (!q) return true;
@@ -82,16 +80,16 @@ export default function LockersManagement() {
   }, [lockerData.lockers, lockerState, search, statusFilter, sectionFilter]);
 
   const history = useMemo(
-    () => lockerData.assignments.slice().sort((a, b) => (a.assignedAt < b.assignedAt ? 1 : -1)).slice(0, 8),
+    () => lockerData.assignments.slice().sort((a, b) => (a.assignedAt < b.assignedAt ? 1 : -1)),
     [lockerData.assignments],
   );
 
   const statCards: { key: string; value: string; icon: ReactNode; accent: string }[] = [
-    { key: "locker.total", value: String(stats.total), icon: <Lockers className="w-5 h-5" />, accent: "text-lime-400" },
-    { key: "locker.utilization", value: `${stats.utilization}%`, icon: <ChartBar className="w-5 h-5" />, accent: "text-amber-400" },
-    { key: "locker.unreturned", value: String(stats.unreturned), icon: <ArrowsClockwise className="w-5 h-5" />, accent: "text-blue-400" },
-    { key: "locker.lostKeys", value: String(stats.lostKeys), icon: <Key className="w-5 h-5" />, accent: "text-red-400" },
-    { key: "locker.avgHold", value: t("locker.days", { n: stats.avgHoldDays }), icon: <Clock className="w-5 h-5" />, accent: "text-zinc-300" },
+    { key: "Total lockers", value: String(stats.total), icon: <Lockers className="w-5 h-5" />, accent: "text-lime-400" },
+    { key: "Available", value: String(lockerData.lockers.filter(locker => locker.isActive !== false && locker.status === "AVAILABLE").length), icon: <Check className="w-5 h-5" />, accent: "text-emerald-400" },
+    { key: "Occupied / keys OUT", value: String(stats.inUse), icon: <Key className="w-5 h-5" />, accent: "text-amber-400" },
+    { key: "Maintenance", value: String(lockerData.lockers.filter(locker => locker.isActive !== false && locker.status === "OUT_OF_SERVICE").length), icon: <Warning className="w-5 h-5" />, accent: "text-red-400" },
+    { key: "Inactive", value: String(lockerData.lockers.filter(locker => locker.isActive === false).length), icon: <XCircle className="w-5 h-5" />, accent: "text-zinc-300" },
   ];
 
   return (
@@ -111,12 +109,12 @@ export default function LockersManagement() {
             </p>
           </div>
         </div>
-        <button
+        {canManage && <button
           onClick={() => setShowAdd(true)}
           className="bg-lime-400 text-zinc-950 px-4 py-2.5 rounded-xl font-bold text-sm hover:bg-lime-300 transition-colors active:scale-[0.97] flex items-center gap-2"
         >
           <Plus weight="bold" className="w-4 h-4" /> {t("locker.add")}
-        </button>
+        </button>}
       </div>
 
       {/* Cartes de synthèse */}
@@ -125,7 +123,7 @@ export default function LockersManagement() {
           <div key={card.key} className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4">
             <div className={`flex items-center gap-2 mb-2 ${card.accent}`}>
               {card.icon}
-              <span className="text-[11px] font-bold uppercase tracking-wide text-zinc-500">{t(card.key)}</span>
+              <span className="text-[11px] font-bold uppercase tracking-wide text-zinc-500">{card.key}</span>
             </div>
             <div className="text-2xl font-black text-white">{card.value}</div>
           </div>
@@ -145,10 +143,11 @@ export default function LockersManagement() {
         </div>
         <select
           value={statusFilter}
-          onChange={e => setStatusFilter(e.target.value as "ALL" | LockerStatus)}
+          onChange={e => setStatusFilter(e.target.value as "ALL" | LockerStatus | "INACTIVE")}
           className="bg-zinc-800 border border-zinc-700 rounded-xl px-4 py-2.5 text-white text-sm focus:outline-none focus:border-lime-400/60"
         >
           <option value="ALL">{t("locker.allStatuses")}</option>
+          <option value="INACTIVE">INACTIVE</option>
           {(["AVAILABLE", "IN_USE", "OUT_OF_SERVICE"] as LockerStatus[]).map(s => (
             <option key={s} value={s}>
               {t(`locker.status.${s}`)}
@@ -192,7 +191,7 @@ export default function LockersManagement() {
                 <div className="flex items-center gap-1.5 text-xs text-zinc-400 mb-1">
                   <KeyReturn className="w-3.5 h-3.5" /> {locker.keyTag || "—"}
                 </div>
-                <div className={`text-[11px] font-bold uppercase tracking-wide ${style.text}`}>{t(`locker.status.${locker.status}`)}</div>
+                <div className={`text-[11px] font-bold uppercase tracking-wide ${style.text}`}>{locker.isActive === false ? "INACTIVE" : locker.status === "IN_USE" ? "OCCUPIED · KEY OUT" : locker.status === "OUT_OF_SERVICE" ? "MAINTENANCE" : "AVAILABLE"}</div>
                 <div className="mt-2 text-[11px] text-zinc-500 truncate">
                   {assignment ? assignment.memberName : t(`locker.section.${locker.section}`)}
                 </div>
@@ -226,7 +225,8 @@ export default function LockersManagement() {
                       {locker?.number ?? "—"} · {a.memberName}
                     </div>
                     <div className="text-xs text-zinc-500">
-                      {t("locker.issuedAt")} {new Date(a.assignedAt).toLocaleDateString(state.language === "am" ? "am-ET" : "en-US")}
+                      Key {a.keyNumber || locker?.keyTag || "—"} · {a.keyReturned ? "RETURNED" : a.status === "lost" ? "LOST" : "OUT"} · {t("locker.issuedAt")} {new Date(a.assignedAt).toLocaleString(state.language === "am" ? "am-ET" : "en-US")}
+                      {a.returnedAt && ` · Returned ${new Date(a.returnedAt).toLocaleString(state.language === "am" ? "am-ET" : "en-US")} by ${a.returnedBy || "staff"}`}
                       {a.lostKeyFee > 0 ? ` · ${state.settings.currency} ${a.lostKeyFee}` : ""}
                     </div>
                   </div>
@@ -241,8 +241,8 @@ export default function LockersManagement() {
       </div>
 
       <AnimatePresence>
-        {selected && <LockerActionModal locker={selected} onClose={() => setSelected(null)} actor={actor} lockerState={lockerState} customers={lockerData.customers} refresh={lockerData.refresh} />}
-        {showAdd && <AddLockerModal onClose={() => setShowAdd(false)} refresh={lockerData.refresh} />}
+        {selected && <LockerActionModal locker={selected} onClose={() => setSelected(null)} actor={actor} lockerState={lockerState} customers={lockerData.customers} refresh={lockerData.refresh} canManage={canManage} />}
+        {showAdd && canManage && <AddLockerModal onClose={() => setShowAdd(false)} refresh={lockerData.refresh} />}
       </AnimatePresence>
     </div>
   );
@@ -250,18 +250,28 @@ export default function LockersManagement() {
 
 /* ---------------------------- Modal : action sur un casier ---------------------------- */
 
-function LockerActionModal({ locker, onClose, actor, lockerState, customers, refresh }: { locker: Locker; onClose: () => void; actor: string; lockerState: ReturnType<typeof useGym>["state"]; customers: { id: string; name: string; customerCode: string }[]; refresh: () => Promise<void> }) {
+function LockerActionModal({ locker, onClose, actor, lockerState, customers, refresh, canManage }: { locker: Locker; onClose: () => void; actor: string; lockerState: ReturnType<typeof useGym>["state"]; customers: { id: string; name: string; customerCode: string }[]; refresh: () => Promise<void>; canManage: boolean }) {
   const { state } = useGym();
   const t = useT();
   const assignment = activeAssignmentOf(lockerState, locker.id);
   const [memberId, setMemberId] = useState("");
   const [dueDate, setDueDate] = useState("");
   const [notes, setNotes] = useState("");
-  const [fee, setFee] = useState("200");
+  const [fee, setFee] = useState("");
+  const [lostReason, setLostReason] = useState("");
+  const [editNumber, setEditNumber] = useState(locker.number);
+  const [editSection, setEditSection] = useState<LockerSection>(locker.section);
+  const [editKey, setEditKey] = useState(locker.keyTag);
+  const [editNotes, setEditNotes] = useState(locker.notes ?? "");
 
   const run = async (fn: () => Promise<void>, success: string) => {
     try { await fn(); await refresh(); toast.success(success); onClose(); }
     catch (cause) { console.error("Locker operation failed", cause); toast.error(cause instanceof Error ? cause.message : "Locker operation failed."); }
+  };
+  const conditionAction = (status: "AVAILABLE" | "OUT_OF_SERVICE", isActive: boolean) => {
+    const reason = window.prompt(isActive ? "Reason for this locker condition change:" : "Reason for deactivating this locker:");
+    if (!reason?.trim()) return;
+    void run(() => setLockerCondition(locker.id, status, isActive, reason), isActive ? "Locker condition updated." : "Locker deactivated.");
   };
 
   return (
@@ -298,7 +308,7 @@ function LockerActionModal({ locker, onClose, actor, lockerState, customers, ref
           {t(`locker.status.${locker.status}`)}
         </div>
 
-        {locker.status === "AVAILABLE" && (
+        {locker.status === "AVAILABLE" && locker.isActive !== false && (
           <div className="space-y-4">
             <div>
               <label className={labelClass}>{t("locker.selectMember")}</label>
@@ -326,6 +336,7 @@ function LockerActionModal({ locker, onClose, actor, lockerState, customers, ref
                   toast.error(t("locker.fillRequired"));
                   return;
                 }
+                if (!window.confirm(`Hand out key ${locker.keyTag} for locker ${locker.number} to ${customer.name}?`)) return;
                 void run(() => assignLocker({ lockerId: locker.id, customerId: customer.id, customerName: customer.name, dueDate: dueDate || null, notes, issuedBy: state.currentUser?.id ?? actor }), t("locker.issueSuccess", { n: locker.number, name: customer.name }));
               }}
               className="w-full bg-lime-400 text-zinc-950 py-3 rounded-xl font-bold hover:bg-lime-300 transition-colors active:scale-[0.98] flex items-center justify-center gap-2"
@@ -342,7 +353,7 @@ function LockerActionModal({ locker, onClose, actor, lockerState, customers, ref
                 <User className="w-4 h-4 text-lime-400" /> {assignment.memberName}
               </div>
               <div className="text-xs text-zinc-500">
-                {t("locker.issuedAt")}: {new Date(assignment.assignedAt).toLocaleDateString(state.language === "am" ? "am-ET" : "en-US")}
+                {t("locker.issuedAt")}: {new Date(assignment.assignedAt).toLocaleString(state.language === "am" ? "am-ET" : "en-US")} · Key {assignment.keyNumber || locker.keyTag} OUT
               </div>
               <div className="text-xs text-zinc-500">
                 {t("locker.issuedBy")}: {assignment.issuedBy}
@@ -354,7 +365,7 @@ function LockerActionModal({ locker, onClose, actor, lockerState, customers, ref
               )}
             </div>
             <button
-              onClick={() => assignment && void run(() => returnLockerAssignment(assignment), t("locker.returnSuccess", { n: locker.number }))}
+              onClick={() => { if (assignment && window.confirm(`Confirm that key ${assignment.keyNumber || locker.keyTag} has been physically returned?`)) void run(() => returnLockerAssignment(assignment), t("locker.returnSuccess", { n: locker.number })); }}
               className="w-full bg-emerald-400 text-zinc-950 py-3 rounded-xl font-bold hover:bg-emerald-300 transition-colors active:scale-[0.98] flex items-center justify-center gap-2"
             >
               <KeyReturn weight="bold" className="w-4 h-4" /> {t("locker.return")}
@@ -367,8 +378,12 @@ function LockerActionModal({ locker, onClose, actor, lockerState, customers, ref
                 <label className={labelClass}>{t("locker.lostKeyFee")}</label>
                 <input type="number" min={0} value={fee} onChange={e => setFee(e.target.value)} className={inputClass} />
               </div>
+              <div>
+                <label className={labelClass}>Reason / incident details</label>
+                <input value={lostReason} onChange={e => setLostReason(e.target.value)} className={inputClass} placeholder="Describe how the key was lost" />
+              </div>
               <button
-                onClick={() => assignment && void run(() => loseLockerKey(assignment, Number(fee) || 0, t("locker.lostKey")), t("locker.lostSuccess", { n: locker.number }))}
+                onClick={() => { if (!assignment) return; if (fee === "" || Number(fee) < 0) { toast.error("Enter a nonnegative key fee."); return; } if (lostReason.trim().length < 3) { toast.error("Enter the reason the key was lost."); return; } if (window.confirm(`Record key ${assignment.keyNumber || locker.keyTag} as lost?`)) void run(() => loseLockerKey(assignment, Number(fee), lostReason.trim()), t("locker.lostSuccess", { n: locker.number })); }}
                 className="w-full bg-red-400/15 text-red-400 border border-red-400/40 py-3 rounded-xl font-bold hover:bg-red-400/25 transition-colors active:scale-[0.98] flex items-center justify-center gap-2"
               >
                 <XCircle weight="bold" className="w-4 h-4" /> {t("locker.lostKey")}
@@ -377,22 +392,20 @@ function LockerActionModal({ locker, onClose, actor, lockerState, customers, ref
           </div>
         )}
 
-        {locker.status === "OUT_OF_SERVICE" && (
+        {(locker.status === "OUT_OF_SERVICE" || locker.isActive === false) && (
           <div className="space-y-4">
             <div className="flex items-start gap-2 text-sm text-red-400 bg-red-400/10 border border-red-400/30 rounded-xl p-4">
               <Warning className="w-5 h-5 shrink-0" />
               <span>{t("locker.outOfService")}</span>
             </div>
-            <button
-              onClick={() => {
-                void run(() => updateLockerStatus(locker.id, "AVAILABLE"), t("locker.status.AVAILABLE"));
-              }}
-              className="w-full bg-zinc-800 border border-zinc-700 py-3 rounded-xl font-bold text-white hover:bg-zinc-700 transition-colors active:scale-[0.98] flex items-center justify-center gap-2"
-            >
-              <Check weight="bold" className="w-4 h-4" /> {t("locker.status.AVAILABLE")}
-            </button>
+            {canManage && locker.isActive !== false && <button onClick={() => conditionAction("AVAILABLE", true)} className="w-full bg-zinc-800 border border-zinc-700 py-3 rounded-xl font-bold text-white hover:bg-zinc-700">Restore to available</button>}
           </div>
         )}
+
+        {canManage && !assignment && locker.isActive !== false && locker.status !== "OUT_OF_SERVICE" && <button onClick={() => conditionAction("OUT_OF_SERVICE", true)} className="mt-4 w-full rounded-xl border border-amber-400/30 bg-amber-400/10 py-3 font-semibold text-amber-200">Place in maintenance</button>}
+        {canManage && !assignment && locker.isActive !== false && <button onClick={() => conditionAction("OUT_OF_SERVICE", false)} className="mt-3 w-full rounded-xl border border-red-400/30 bg-red-400/10 py-3 font-semibold text-red-200">Deactivate locker</button>}
+        {canManage && !assignment && locker.isActive === false && <button onClick={() => conditionAction("AVAILABLE", true)} className="mt-3 w-full rounded-xl bg-lime-400 py-3 font-bold text-zinc-950">Reactivate locker</button>}
+        {canManage && !assignment && <div className="mt-5 space-y-3 border-t border-zinc-800 pt-5"><h4 className="font-semibold text-white">Edit locker record</h4><input aria-label="Locker number" className={inputClass} value={editNumber} onChange={event => setEditNumber(event.target.value)} /><select aria-label="Locker location" className={inputClass} value={editSection} onChange={event => setEditSection(event.target.value as LockerSection)}>{SECTIONS.map(section => <option key={section} value={section}>{section}</option>)}</select><input aria-label="Physical key number" className={inputClass} value={editKey} onChange={event => setEditKey(event.target.value)} /><input aria-label="Notes" className={inputClass} value={editNotes} onChange={event => setEditNotes(event.target.value)} placeholder="Notes" /><button onClick={() => void run(() => editLocker({ id: locker.id, number: editNumber.trim(), section: editSection, keyTag: editKey.trim(), notes: editNotes.trim() }), "Locker updated.")} className="w-full rounded-xl bg-zinc-800 py-3 font-semibold text-white">Save locker details</button></div>}
       </motion.div>
     </motion.div>
   );

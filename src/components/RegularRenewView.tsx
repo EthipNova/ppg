@@ -45,6 +45,8 @@ const METHOD_LABELS: Record<PaymentMethod, string> = {
 
 interface RegularRenewViewProps {
   customerId: string;
+  category?: "REGULAR" | "STUDENT";
+  onRenewalSubmitted?: () => void;
 }
 
 interface SubmittedProofInfo {
@@ -55,7 +57,7 @@ interface SubmittedProofInfo {
   fileName: string;
 }
 
-export default function RegularRenewView({ customerId }: RegularRenewViewProps) {
+export default function RegularRenewView({ customerId, category = "REGULAR", onRenewalSubmitted }: RegularRenewViewProps) {
   const [state, setState] = useState<RegularRenewalState>({ status: "loading" });
   const [selectedPlanId, setSelectedPlanId] = useState<string>("");
   const [method, setMethod] = useState<PaymentMethod>("cbe_birr");
@@ -70,10 +72,13 @@ export default function RegularRenewView({ customerId }: RegularRenewViewProps) 
   const [submittedProof, setSubmittedProof] = useState<SubmittedProofInfo | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const renewalRequestKey = useRef<string | null>(null);
+
+  useEffect(() => { renewalRequestKey.current = null; }, [selectedPlanId, method, category]);
 
   const loadData = useCallback(() => {
     setState({ status: "loading" });
-    fetchRegularRenewalData(customerId)
+    fetchRegularRenewalData(customerId, category)
       .then(res => {
         setState(res);
         if (res.status === "success" && res.data.availablePlans.length > 0) {
@@ -89,7 +94,7 @@ export default function RegularRenewView({ customerId }: RegularRenewViewProps) 
           error: "Failed to connect to the database. Please check your internet connection.",
         });
       });
-  }, [customerId]);
+  }, [customerId, category]);
 
   useEffect(() => {
     loadData();
@@ -176,6 +181,8 @@ export default function RegularRenewView({ customerId }: RegularRenewViewProps) 
 
     const result = await submitRegularRenewalProof({
       customerId,
+      category,
+      idempotencyKey: category === "STUDENT" ? (renewalRequestKey.current ??= crypto.randomUUID()) : undefined,
       membershipId: currentMembership?.id || null,
       plan: selectedPlan,
       paymentMethod: method,
@@ -188,6 +195,7 @@ export default function RegularRenewView({ customerId }: RegularRenewViewProps) 
       setSubmitError(result.error || "Failed to submit payment proof. Please try again.");
       return;
     }
+    renewalRequestKey.current = null;
 
     // Success! Show confirmation card
     setSubmittedProof({
@@ -197,6 +205,7 @@ export default function RegularRenewView({ customerId }: RegularRenewViewProps) 
       method,
       fileName: proofFile.name,
     });
+    onRenewalSubmitted?.();
     handleRemoveFile();
   };
 

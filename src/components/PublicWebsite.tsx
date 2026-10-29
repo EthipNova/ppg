@@ -1,13 +1,14 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Barbell, Users, Lightning, ShieldCheck, Heart, Star, MapPin, Phone, Envelope, ArrowRight, CheckCircle, Clock, Flame, GraduationCap, MoonStars, MusicNotes, Sparkle } from "@phosphor-icons/react";
 import { useGym, formatETB, sendEmail, planAppliesToCategory, planCategoryText, categoryLabelOf } from "../context/GymContext";
-import type { CustomerCategory, Member } from "../types";
+import type { CustomerCategory, Member, Plan } from "../types";
 
 const CATEGORY_ICONS: Record<string, typeof Sparkle> = { REGULAR: Sparkle, STUDENT: GraduationCap, MUSLIM: MoonStars, AEROBICS: MusicNotes };
 const SHOWCASE_IMAGE = "https://dala-prod-public-storage.s3.eu-west-1.amazonaws.com/attachments/74c3195e-a7cc-42d6-bc7d-af4a5309a248/1791041128283_Screenshot_2026-10-03_182425.webp";
 import { toast } from "sonner";
 import { registerCustomer } from "../services/registration";
+import { fetchPlansForCategory, PlanLoadError } from "../services/studentMembershipService";
 
 export default function PublicWebsite({ onJoin }: { onJoin: (member: Member) => void | Promise<void> }) {
   const { state, dispatch } = useGym();
@@ -19,10 +20,18 @@ export default function PublicWebsite({ onJoin }: { onJoin: (member: Member) => 
   const [joinForm, setJoinForm] = useState({ name: "", phone: "", email: "", studentId: "", institution: "" });
   const [joinPassword, setJoinPassword] = useState("");
   const [isJoining, setIsJoining] = useState(false);
+  const [studentPlans, setStudentPlans] = useState<Plan[]>([]);
+  const [studentPlansState, setStudentPlansState] = useState<"idle" | "loading" | "ready" | "error">("idle");
+  const [studentPlansError, setStudentPlansError] = useState("");
+  const planRequestId = useRef(0);
+  const [joinErrors, setJoinErrors] = useState<Record<string, string>>({});
   const [contactForm, setContactForm] = useState({ name: "", email: "", message: "" });
 
-  const plansForCategory = state.plans.filter(p => p.active && planAppliesToCategory(p, joinCategory));
+  const plansForCategory = joinCategory === "STUDENT"
+    ? studentPlans
+    : state.plans.filter(p => p.active && planAppliesToCategory(p, joinCategory));
 
+<<<<<<< HEAD
   const handleCategorySelect = (category: CustomerCategory) => {
     setSelectedCategory(category);
     setJoinCategory(category);
@@ -31,32 +40,76 @@ export default function PublicWebsite({ onJoin }: { onJoin: (member: Member) => 
   };
 
   const selectCategory = (category: CustomerCategory) => {
+=======
+  const selectCategory = async (category: CustomerCategory) => {
+    const requestId = ++planRequestId.current;
+>>>>>>> origin/kb
     setJoinCategory(category);
+    setJoinErrors({});
+    if (category === "STUDENT") {
+      setStudentPlansState("loading");
+      setStudentPlans([]);
+      setStudentPlansError("");
+      try {
+        const loadedPlans = await fetchPlansForCategory("STUDENT");
+        if (requestId !== planRequestId.current) return;
+        const plans = loadedPlans.map(plan => ({
+          id: plan.id, name: plan.name, price: plan.price, durationDays: plan.durationDays,
+          perks: plan.benefits ? plan.benefits.split(",").map(value => value.trim()).filter(Boolean) : [],
+          active: true, applicableCategories: ["STUDENT"] as CustomerCategory[],
+        }));
+        setStudentPlans(plans);
+        setStudentPlansState("ready");
+        setSelectedPlan(plans[0]?.id ?? "");
+      } catch (error) {
+        if (requestId !== planRequestId.current) return;
+        const message = error instanceof PlanLoadError
+          ? error.kind === "network"
+            ? "Check your connection and retry."
+            : error.kind === "permission"
+              ? "Student plan access is temporarily unavailable. Please try again later."
+              : error.kind === "invalid_category"
+                ? "Student plans could not be matched. Please contact reception."
+                : error.kind === "schema"
+                  ? "Student plan data is not configured correctly. Please contact the gym administrator."
+                : "Student plans are temporarily unavailable. Please try again later."
+          : "Student plans are temporarily unavailable. Please try again later.";
+        setStudentPlansState("error");
+        setStudentPlansError(message);
+        toast.error(`Student plans could not be loaded. ${message}`);
+      }
+      return;
+    }
+    setStudentPlansState("idle");
+    setStudentPlansError("");
     const next = state.plans.find(p => p.active && planAppliesToCategory(p, category));
-    if (next) setSelectedPlan(next.id);
+    setSelectedPlan(next?.id ?? "");
   };
 
   const handleJoin = async () => {
-    if (!joinForm.name || !joinForm.phone || !joinForm.email) {
-      toast.error("Please fill in all required fields");
-      return;
-    }
-    if (joinPassword.length < 6) {
-      toast.error("Password must be at least 6 characters");
-      return;
-    }
-    const plan = state.plans.find(p => p.id === selectedPlan) ?? plansForCategory[0];
+    const nextErrors: Record<string, string> = {};
+    if (!joinForm.name.trim()) nextErrors.name = "Enter your full name.";
+    if (!joinForm.phone.trim()) nextErrors.phone = "Enter your phone number.";
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(joinForm.email.trim())) nextErrors.email = "Enter a valid email address.";
+    if (joinPassword.length < 6) nextErrors.password = "Password must be at least 6 characters.";
+    if (joinCategory === "STUDENT" && !joinForm.studentId.trim()) nextErrors.studentId = "Student ID number is required.";
+    if (joinCategory === "STUDENT" && !joinForm.institution.trim()) nextErrors.institution = "Institution name is required.";
+    if (joinCategory === "STUDENT" && studentPlansState !== "ready") nextErrors.plan = "Student plans are not available yet. Reload plans and try again.";
+    setJoinErrors(nextErrors);
+    if (Object.keys(nextErrors).length) return;
+
+    const plan = plansForCategory.find(p => p.id === selectedPlan) ?? plansForCategory[0];
     if (!plan) {
-      toast.error("No membership is available for this category");
-      return;
-    }
-    if (joinCategory === "STUDENT" && !joinForm.studentId) {
-      toast.error("A student ID number is required for the Student category");
+      setJoinErrors({ plan: "No database-configured membership plan is available for this category." });
       return;
     }
     setIsJoining(true);
     try {
-      const registered = await registerCustomer({ email: joinForm.email, password: joinPassword, fullName: joinForm.name, phone: joinForm.phone, planName: plan.name, planPrice: plan.price, durationDays: plan.durationDays });
+      const registered = await registerCustomer({
+        email: joinForm.email.trim(), password: joinPassword, fullName: joinForm.name.trim(), phone: joinForm.phone.trim(),
+        planId: plan.id, planName: plan.name, planPrice: plan.price, durationDays: plan.durationDays,
+        category: joinCategory, studentId: joinForm.studentId.trim(), institution: joinForm.institution.trim(),
+      });
       const newMember: Member = {
         id: registered.id,
         name: joinForm.name,
@@ -65,8 +118,8 @@ export default function PublicWebsite({ onJoin }: { onJoin: (member: Member) => 
         memberId: registered.customerCode,
         planId: plan.id,
         joinDate: new Date().toISOString().split("T")[0],
-        expiryDate: new Date(Date.now() + plan.durationDays * 86400000).toISOString().split("T")[0],
-        status: "active",
+        expiryDate: joinCategory === "STUDENT" ? "" : new Date(Date.now() + plan.durationDays * 86400000).toISOString().split("T")[0],
+        status: joinCategory === "STUDENT" ? "inactive" : "active",
         lastVisit: null,
         emergencyContact: "",
         emergencyPhone: "",
@@ -78,14 +131,21 @@ export default function PublicWebsite({ onJoin }: { onJoin: (member: Member) => 
         institution: joinCategory === "STUDENT" ? joinForm.institution : undefined,
         studentVerified: false,
       };
-      await onJoin(newMember);
-      sendEmail(state, dispatch, joinForm.email, joinForm.name, "Welcome to Power Plus Gym!", `Hi ${joinForm.name}, your ${plan.name} membership (${categoryLabelOf(state, joinCategory)} category) is active until ${newMember.expiryDate}.`, "welcome");
-      toast.success(registered.membershipCreated
-        ? `Welcome ${joinForm.name}! Your ${plan.name} membership is active.`
-        : `Welcome ${joinForm.name}! Your customer account was created; membership setup is pending.`);
+      if (registered.sessionCreated) await onJoin(newMember);
+      if (registered.sessionCreated && joinCategory !== "STUDENT") {
+        sendEmail(state, dispatch, joinForm.email, joinForm.name, "Welcome to Power Plus Gym!", `Hi ${joinForm.name}, your ${plan.name} membership (${categoryLabelOf(state, joinCategory)} category) is active until ${newMember.expiryDate}.`, "welcome");
+      }
+      toast.success(!registered.sessionCreated
+        ? "Account created. Check your email to confirm it, then sign in to open your member dashboard."
+        : joinCategory === "STUDENT"
+        ? `Student account created. Show your student ID at reception for verification; membership activates only after verification and payment are complete.`
+        : registered.membershipCreated
+          ? `Welcome ${joinForm.name}! Your ${plan.name} membership is active.`
+          : `Welcome ${joinForm.name}! Your customer account was created; membership setup is pending.`);
       setShowJoinModal(false);
       setJoinForm({ name: "", phone: "", email: "", studentId: "", institution: "" });
       setJoinPassword("");
+      setJoinErrors({});
     } catch (cause) {
       console.error("Join Us registration failed", cause);
       toast.error(cause instanceof Error ? cause.message : "Registration failed. Please try again.");
@@ -420,18 +480,24 @@ export default function PublicWebsite({ onJoin }: { onJoin: (member: Member) => 
                     ))}
                   </div>
                 </div>
-                <select value={selectedPlan} onChange={e => setSelectedPlan(e.target.value)} className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-lime-400/50">
-                  {plansForCategory.map(p => <option key={p.id} value={p.id}>{p.name} - {formatETB(p.price)}</option>)}
+                <select value={selectedPlan} onChange={e => setSelectedPlan(e.target.value)} disabled={joinCategory === "STUDENT" && studentPlansState !== "ready"} className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-lime-400/50">
+                  {joinCategory === "STUDENT" && studentPlansState === "loading" && <option value="">Loading Student plans…</option>}
+                  {joinCategory === "STUDENT" && studentPlansState === "ready" && !plansForCategory.length && <option value="">No Student plans are configured</option>}
+                  {plansForCategory.map(p => <option key={p.id} value={p.id}>{p.name} · {p.durationDays} days · {formatETB(p.price)}{p.perks.length ? ` · ${p.perks.join(", ")}` : ""}</option>)}
                 </select>
-                <input value={joinForm.name} onChange={e => setJoinForm({ ...joinForm, name: e.target.value })} placeholder="Full name" className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-4 py-3 text-white placeholder:text-zinc-500 focus:outline-none focus:border-lime-400/50" />
-                <input value={joinForm.phone} onChange={e => setJoinForm({ ...joinForm, phone: e.target.value })} placeholder="Phone number" className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-4 py-3 text-white placeholder:text-zinc-500 focus:outline-none focus:border-lime-400/50" />
-                <input value={joinForm.email} onChange={e => setJoinForm({ ...joinForm, email: e.target.value })} placeholder="E-mail address" className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-4 py-3 text-white placeholder:text-zinc-500 focus:outline-none focus:border-lime-400/50" />
-                <input type="password" value={joinPassword} onChange={e => setJoinPassword(e.target.value)} placeholder="Password (min. 6 characters)" className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-4 py-3 text-white placeholder:text-zinc-500 focus:outline-none focus:border-lime-400/50" />
+                {joinErrors.plan && <p className="text-xs text-red-400">{joinErrors.plan}</p>}
+                {joinCategory === "STUDENT" && studentPlansState === "error" && <p className="text-xs text-red-400">Student plans could not be loaded. {studentPlansError} <button type="button" onClick={() => void selectCategory("STUDENT")} className="underline focus-visible:outline focus-visible:outline-lime-400">Retry</button></p>}
+                <div><input aria-label="Full name" aria-invalid={!!joinErrors.name} value={joinForm.name} onChange={e => setJoinForm({ ...joinForm, name: e.target.value })} placeholder="Full name" className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-4 py-3 text-white placeholder:text-zinc-500 focus:outline-none focus:border-lime-400/50" />{joinErrors.name && <p className="text-xs text-red-400 mt-1">{joinErrors.name}</p>}</div>
+                <div><input aria-label="Phone number" aria-invalid={!!joinErrors.phone} value={joinForm.phone} onChange={e => setJoinForm({ ...joinForm, phone: e.target.value })} placeholder="Phone number" className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-4 py-3 text-white placeholder:text-zinc-500 focus:outline-none focus:border-lime-400/50" />{joinErrors.phone && <p className="text-xs text-red-400 mt-1">{joinErrors.phone}</p>}</div>
+                <div><input type="email" aria-label="Email address" aria-invalid={!!joinErrors.email} value={joinForm.email} onChange={e => setJoinForm({ ...joinForm, email: e.target.value })} placeholder="E-mail address" className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-4 py-3 text-white placeholder:text-zinc-500 focus:outline-none focus:border-lime-400/50" />{joinErrors.email && <p className="text-xs text-red-400 mt-1">{joinErrors.email}</p>}</div>
+                <div><input type="password" aria-label="Password" aria-invalid={!!joinErrors.password} value={joinPassword} onChange={e => setJoinPassword(e.target.value)} placeholder="Password (min. 6 characters)" className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-4 py-3 text-white placeholder:text-zinc-500 focus:outline-none focus:border-lime-400/50" />{joinErrors.password && <p className="text-xs text-red-400 mt-1">{joinErrors.password}</p>}</div>
                 {joinCategory === "STUDENT" && (
                   <div className="space-y-3 border border-blue-400/30 bg-blue-400/5 rounded-xl p-3">
                     <p className="text-xs text-blue-400">Student proof required — verified at reception before the reduced rate is activated.</p>
-                    <input value={joinForm.studentId} onChange={e => setJoinForm({ ...joinForm, studentId: e.target.value })} placeholder="Student ID number *" className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-4 py-3 text-white placeholder:text-zinc-500 focus:outline-none focus:border-lime-400/50" />
-                    <input value={joinForm.institution} onChange={e => setJoinForm({ ...joinForm, institution: e.target.value })} placeholder="Institution" className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-4 py-3 text-white placeholder:text-zinc-500 focus:outline-none focus:border-lime-400/50" />
+                    <input value={joinForm.studentId} onChange={e => setJoinForm({ ...joinForm, studentId: e.target.value })} placeholder="Student ID number *" aria-label="Student ID number" className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-4 py-3 text-white placeholder:text-zinc-500 focus:outline-none focus:border-lime-400/50" />
+                    {joinErrors.studentId && <p className="text-xs text-red-400">{joinErrors.studentId}</p>}
+                    <input value={joinForm.institution} onChange={e => setJoinForm({ ...joinForm, institution: e.target.value })} placeholder="Institution *" aria-label="Institution" className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-4 py-3 text-white placeholder:text-zinc-500 focus:outline-none focus:border-lime-400/50" />
+                    {joinErrors.institution && <p className="text-xs text-red-400">{joinErrors.institution}</p>}
                   </div>
                 )}
                 <button onClick={() => void handleJoin()} disabled={isJoining} className="w-full bg-lime-400 text-zinc-950 font-bold py-3 rounded-xl hover:bg-lime-300 transition-colors active:scale-[0.98] flex items-center justify-center gap-2 disabled:opacity-60">

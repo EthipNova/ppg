@@ -9,6 +9,13 @@ export interface CustomerSteamAccess {
   price: number;
   status: string;
   paymentId: string | null;
+  paymentStatus: string;
+  paymentMethod: string;
+  usageCount: number;
+  usageLimit: number | null;
+  trackUsage: boolean;
+  currency: string;
+  serviceName: string;
   startDate: string | null;
   endDate: string | null;
   expiryDate: string | null;
@@ -51,12 +58,17 @@ export function isValidUuid(id: string): boolean {
 /**
  * Evaluates the actual state of a Steam pass.
  */
-export function determinePassState(pass: CustomerSteamAccess | null): "Active" | "Expired" | "No Active Pass" {
+export function determinePassState(pass: CustomerSteamAccess | null): "Active" | "Expired" | "Cancelled" | "No Active Pass" {
   if (!pass) return "No Active Pass";
+  if (pass.status?.toLowerCase() === "cancelled") return "Cancelled";
 
-  const isExpiredByDate = pass.endDate ? new Date(pass.endDate).getTime() < Date.now() : false;
-  const isExpiredByVisits = pass.remainingVisits <= 0;
-  const isExplicitExpired = pass.status?.toLowerCase() === "expired";
+  const today = new Date().toISOString().slice(0, 10);
+  const isExpiredByDate = pass.endDate ? pass.endDate < today : false;
+  const isExpiredByVisits = pass.usageLimit !== null
+    ? pass.trackUsage && pass.usageCount >= pass.usageLimit
+    : pass.totalVisits > 0 && pass.remainingVisits <= 0;
+  const isExplicitExpired = ["expired", "cancelled"].includes(pass.status?.toLowerCase() ?? "")
+    || pass.paymentStatus !== "PAID";
 
   if (isExplicitExpired || isExpiredByDate || isExpiredByVisits) {
     return "Expired";
@@ -86,7 +98,7 @@ export async function fetchCustomerSteamAccess(customerId: string): Promise<Fetc
   try {
     const { data, error } = await supabase
       .from("steam_access")
-      .select("id, customer_id, type, total_visits, remaining_visits, price, status, payment_id, start_date, end_date, created_at")
+      .select("id, customer_id, type, total_visits, remaining_visits, price, status, payment_id, service_id, start_date, end_date, created_at, usage_count, usage_limit, track_usage, currency, cancelled_at")
       .eq("customer_id", customerId)
       .order("created_at", { ascending: false });
 
@@ -100,20 +112,43 @@ export async function fetchCustomerSteamAccess(customerId: string): Promise<Fetc
       };
     }
 
-    const records: CustomerSteamAccess[] = (data || []).map((row: any) => ({
+    const accessRows = data || [];
+    const paymentIds = [...new Set(accessRows.map(row => row.payment_id).filter((id): id is string => Boolean(id)))];
+    const serviceIds = [...new Set(accessRows.map(row => row.service_id).filter((id): id is string => Boolean(id)))];
+    const paymentResult = paymentIds.length
+      ? await supabase.from("payments").select("id, payment_status, payment_method").in("id", paymentIds)
+      : { data: [], error: null };
+    const serviceResult = serviceIds.length
+      ? await supabase.from("services").select("id, name").in("id", serviceIds)
+      : { data: [], error: null };
+    const relatedError = paymentResult.error ?? serviceResult.error;
+    if (relatedError) throw relatedError;
+    const payments = new Map((paymentResult.data ?? []).map(payment => [payment.id, payment]));
+    const services = new Map((serviceResult.data ?? []).map(service => [service.id, service.name]));
+    const records: CustomerSteamAccess[] = accessRows.map((row: any) => {
+      const payment = row.payment_id ? payments.get(row.payment_id) : undefined;
+      return ({
       id: row.id,
       customerId: row.customer_id,
       type: row.type || "package",
       totalVisits: Number(row.total_visits ?? 0),
       remainingVisits: Number(row.remaining_visits ?? 0),
       price: Number(row.price ?? 0),
-      status: row.status || "Expired",
+      status: row.cancelled_at ? "Cancelled" : row.status || "Expired",
       paymentId: row.payment_id ?? null,
+      paymentStatus: payment?.payment_status ?? "UNKNOWN",
+      paymentMethod: payment?.payment_method ?? "UNKNOWN",
+      usageCount: Number(row.usage_count ?? 0),
+      usageLimit: row.usage_limit === null ? null : Number(row.usage_limit),
+      trackUsage: Boolean(row.track_usage),
+      currency: row.currency ?? "ETB",
+      serviceName: row.service_id ? services.get(row.service_id) ?? "Historical Steam service" : "Steam service",
       startDate: row.start_date ?? null,
       endDate: row.end_date ?? null,
       expiryDate: row.end_date ?? null,
       createdAt: row.created_at,
-    }));
+    });
+    });
 
     // Find the currently active pass if one exists and hasn't expired
     const activePass =

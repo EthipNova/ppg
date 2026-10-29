@@ -1,6 +1,6 @@
 import { supabase } from "../integrations/supabase/client";
-import type { Session, User as SupabaseUser, AuthChangeEvent } from "@supabase/supabase-js";
-import type { Role, AuthUser, CustomerCategory } from "../types";
+import type { Session, AuthChangeEvent } from "@supabase/supabase-js";
+import type { AuthUser, CustomerCategory } from "../types";
 
 export interface TrustedAuthResult {
   authUser: AuthUser;
@@ -8,7 +8,7 @@ export interface TrustedAuthResult {
   customerCode?: string;
   status: "active" | "inactive" | "blocked" | "error";
   category?: CustomerCategory;
-  rejectReason?: "inactive" | "missing_profile" | "unknown_role" | "conflicting_role" | "not_found";
+  rejectReason?: "inactive" | "missing_profile" | "unknown_role" | "conflicting_role" | "not_found" | "database_error";
 }
 
 /**
@@ -144,9 +144,20 @@ export async function resolveTrustedUserRole(userId: string): Promise<TrustedAut
       .eq("id", userId)
       .maybeSingle();
 
+    // A failed lookup is not evidence that provisioning is missing. Preserve the
+    // distinction so the login screen can ask the user to retry instead.
+    if (userRes.error) {
+      return {
+        authUser: { id: userId, name: "User", role: "member" },
+        source: "users",
+        status: "error",
+        rejectReason: "database_error",
+      };
+    }
+
     const userData = userRes.data as unknown as DbUser | null;
 
-    if (!userRes.error && userData) {
+    if (userData) {
       // Rule 1: Reject inactive accounts
       if (!userData.is_active) {
         console.warn(`[Auth] User account ${userId} is inactive.`);
@@ -201,6 +212,14 @@ export async function resolveTrustedUserRole(userId: string): Promise<TrustedAut
           .maybeSingle();
 
         const staffData = staffRes.data as unknown as DbStaffProfile | null;
+        if (staffRes.error) {
+          return {
+            authUser: { id: userData.id, name: "Staff", role: "staff" },
+            source: "staff_profiles",
+            status: "error",
+            rejectReason: "database_error",
+          };
+        }
         if (!staffRes.error && staffData && !staffData.is_active) {
           return {
             authUser: {
@@ -289,7 +308,15 @@ export async function resolveTrustedUserRole(userId: string): Promise<TrustedAut
 
         const customerData = custRes.data as unknown as DbCustomer | null;
 
-        if (custRes.error || !customerData) {
+        if (custRes.error) {
+          return {
+            authUser: { id: userData.id, name: "Member", role: "member" },
+            source: "customers",
+            status: "error",
+            rejectReason: "database_error",
+          };
+        }
+        if (!customerData) {
           console.warn(`[Auth] Missing customer profile for member user ${userId}`);
           return {
             authUser: {
@@ -347,7 +374,16 @@ export async function resolveTrustedUserRole(userId: string): Promise<TrustedAut
 
     const customerData = custRes.data as unknown as DbCustomer | null;
 
-    if (!custRes.error && customerData) {
+    if (custRes.error) {
+      return {
+        authUser: { id: userId, name: "User", role: "member" },
+        source: "customers",
+        status: "error",
+        rejectReason: "database_error",
+      };
+    }
+
+    if (customerData) {
       const memberStatus = (customerData.status || "").toUpperCase();
       if (memberStatus !== "ACTIVE") {
         return {
@@ -391,7 +427,16 @@ export async function resolveTrustedUserRole(userId: string): Promise<TrustedAut
 
     const trainerData = trainerRes.data as unknown as DbTrainerProfile | null;
 
-    if (!trainerRes.error && trainerData) {
+    if (trainerRes.error) {
+      return {
+        authUser: { id: userId, name: "User", role: "member" },
+        source: "trainer_profiles",
+        status: "error",
+        rejectReason: "database_error",
+      };
+    }
+
+    if (trainerData) {
       if (!trainerData.is_active) {
         return {
           authUser: {

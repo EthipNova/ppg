@@ -3,13 +3,11 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   Barbell,
   Lock,
-  IdentificationCard,
   EnvelopeSimple,
   Eye,
   EyeSlash,
   ArrowLeft,
   CircleNotch,
-  Info,
   WarningCircle,
   X,
   ShieldCheck,
@@ -54,7 +52,7 @@ export default function LoginPage({ onBackToWebsite, onLoginSuccess }: LoginPage
     const trimmedId = identifier.trim();
 
     if (!trimmedId) {
-      nextErrors.identifier = "Please enter your registered email address or Member ID.";
+      nextErrors.identifier = "Please enter your registered email address.";
     }
 
     if (!password) {
@@ -77,17 +75,11 @@ export default function LoginPage({ onBackToWebsite, onLoginSuccess }: LoginPage
     const trimmedId = identifier.trim();
     const isEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmedId);
 
-    // Phase B constraint: Member-code resolution requires the secure backend proxy
     if (!isEmail) {
       setErrors((prev) => ({
         ...prev,
-        identifier: "Member ID sign-in (e.g. PP-004) is coming in a future phase. Please sign in using your registered email address.",
+        identifier: "Enter a valid email address. Member ID sign-in is unavailable; use your registered email.",
       }));
-      setAuthAlert({
-        type: "warning",
-        title: "Member ID Sign-In Not Available Yet",
-        message: "In Phase B, authentication uses your registered email address. Please enter the email address linked to your account.",
-      });
       return;
     }
 
@@ -99,8 +91,10 @@ export default function LoginPage({ onBackToWebsite, onLoginSuccess }: LoginPage
       if (error) {
         let userMessage = "Invalid email or password. Please verify your credentials and try again.";
         const msg = error.message.toLowerCase();
-        if (msg.includes("rate limit") || msg.includes("too many requests")) {
+        if (error.status === 429 || msg.includes("rate limit") || msg.includes("too many requests")) {
           userMessage = "Too many failed attempts. Please wait a few moments before trying again.";
+        } else if (error.status >= 500) {
+          userMessage = "The sign-in service is temporarily unavailable. Please try again shortly.";
         }
         setAuthAlert({
           type: "error",
@@ -140,10 +134,13 @@ export default function LoginPage({ onBackToWebsite, onLoginSuccess }: LoginPage
         } else if (trusted?.rejectReason === "conflicting_role") {
           title = "Role Conflict";
           message = "Conflicting profile records were detected for your account. Access has been denied.";
+        } else if (trusted?.rejectReason === "database_error") {
+          title = "Profile Check Unavailable";
+          message = "Your credentials were accepted, but the gym profile could not be checked because the database request failed. Please try again shortly.";
         }
 
         setAuthAlert({
-          type: "warning",
+          type: trusted?.rejectReason === "database_error" ? "error" : "warning",
           title,
           message,
         });
@@ -158,11 +155,13 @@ export default function LoginPage({ onBackToWebsite, onLoginSuccess }: LoginPage
         onLoginSuccess(trusted.authUser.role);
       }
     } catch (err) {
-      console.error("Login submission error:", err);
+      const networkError = err instanceof TypeError;
       setAuthAlert({
         type: "error",
-        title: "Connection Error",
-        message: "Unable to complete sign-in. Please check your connection and try again.",
+        title: networkError ? "Connection Error" : "Sign-In Unavailable",
+        message: networkError
+          ? "Unable to reach the sign-in service. Check your connection and try again."
+          : "The sign-in service could not complete your request. Please try again shortly.",
       });
     } finally {
       setIsSubmitting(false);
@@ -194,7 +193,7 @@ export default function LoginPage({ onBackToWebsite, onLoginSuccess }: LoginPage
           message: "If an account is associated with this email address, password recovery instructions have been sent. Please check your inbox and spam folder.",
         });
       }
-    } catch (err) {
+    } catch {
       setForgotStatus({
         type: "error",
         message: "Network error occurred while requesting password recovery. Please try again.",
@@ -291,24 +290,23 @@ export default function LoginPage({ onBackToWebsite, onLoginSuccess }: LoginPage
             {/* Identifier Input */}
             <div>
               <label
-                htmlFor="login-identifier"
+                htmlFor="login-email"
                 className="block text-xs font-bold uppercase tracking-wider text-zinc-300 mb-2"
               >
-                Email Address or Member ID
+                Email Address
               </label>
               <div className="relative">
                 <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-zinc-500">
-                  {identifier.includes("@") ? (
-                    <EnvelopeSimple className="w-5 h-5" />
-                  ) : (
-                    <IdentificationCard className="w-5 h-5" />
-                  )}
+                  <EnvelopeSimple className="w-5 h-5" />
                 </div>
                 <input
-                  id="login-identifier"
-                  name="identifier"
-                  type="text"
-                  autoComplete="username"
+                  id="login-email"
+                  name="email"
+                  type="email"
+                  inputMode="email"
+                  autoCapitalize="none"
+                  autoCorrect="off"
+                  autoComplete="email"
                   value={identifier}
                   disabled={isSubmitting}
                   onChange={(e) => {
@@ -316,7 +314,7 @@ export default function LoginPage({ onBackToWebsite, onLoginSuccess }: LoginPage
                     if (errors.identifier) setErrors((prev) => ({ ...prev, identifier: undefined }));
                     if (authAlert) setAuthAlert(null);
                   }}
-                  placeholder="name@example.com (or Member ID)"
+                  placeholder="name@example.com"
                   className={`w-full bg-zinc-950 border rounded-xl pl-11 pr-4 py-3 text-sm text-white placeholder-zinc-500 transition-all focus:outline-none focus:ring-2 disabled:opacity-70 ${
                     errors.identifier
                       ? "border-red-500/80 focus:border-red-500 focus:ring-red-500/20"

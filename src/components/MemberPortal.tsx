@@ -2,16 +2,17 @@ import { useState, useEffect, useCallback } from "react";
 import { motion } from "framer-motion";
 import { Clock, Lightning, User, Phone, Envelope, Heart, ShieldCheck, CreditCard, CheckCircle, Calendar, Flame, GraduationCap, MoonStars, MusicNotes, Sparkle, Drop, Hourglass, Lockers, ArrowRight, ArrowClockwise, XCircle } from "@phosphor-icons/react";
 import { useGym, useT, formatETB, generateId, sendEmail, addAudit, categoryLabelOf, planAppliesToCategory, memberActiveLocker } from "../context/GymContext";
-import { SteamOverview, SteamPurchaseForm, SteamUsageLog, SteamReceptionPurchaseNotice } from "./SteamPanel";
+import { SteamOverview, SteamUsageLog } from "./SteamPanel";
 import AerobicsCustomerDashboard from "./AerobicsCustomerDashboard";
 import AerobicsRenewView from "./AerobicsRenewView";
 import AerobicsProfileView from "./AerobicsProfileView";
 import RegularCustomerDashboard from "./RegularCustomerDashboard";
 import RegularRenewView from "./RegularRenewView";
 import RegularProfileView from "./RegularProfileView";
-import type { CustomerCategory, Member, Payment, AerobicsGroup, Trainer } from "../types";
+import type { CustomerCategory, Member, MemberStatus, Payment, AerobicsGroup, Trainer } from "../types";
 import { fetchAerobicsDashboardData, type AerobicsDashboardState } from "../services/aerobicsDashboardService";
 import { fetchRegularDashboardData, type RegularDashboardState } from "../services/regularDashboardService";
+import { fetchStudentDashboardData, type StudentDashboardState } from "../services/studentDashboardService";
 import { fetchCustomerSteamAccess, fetchCustomerSteamUsage, determinePassState, type CustomerSteamAccess, type CustomerSteamUsage } from "../services/steamService";
 import SteamCustomerPurchaseCard from "./SteamCustomerPurchaseCard";
 import { DEMO_CREDENTIALS } from "../constants";
@@ -21,6 +22,35 @@ const CATEGORY_ICONS: Record<CustomerCategory, typeof Sparkle> = { REGULAR: Spar
 const METHOD_LABELS: Record<string, string> = { telebirr: "Telebirr", cbe_birr: "CBE Birr", cash: "Espèces", card: "Carte" };
 const CARD = "bg-zinc-900 border border-zinc-800 rounded-2xl p-6";
 const INPUT = "w-full bg-zinc-800 border border-zinc-700 rounded-xl px-4 py-3 text-white placeholder:text-zinc-500 focus:outline-none focus:border-lime-400/50";
+
+function normalizeMemberStatus(value: string): MemberStatus {
+  switch (value.toLowerCase()) {
+    case "active": return "active";
+    case "expiring": return "expiring";
+    case "expired": return "expired";
+    case "inactive": return "inactive";
+    case "blocked": return "blocked";
+    default: return "inactive";
+  }
+}
+
+function normalizePaymentMethod(value: string): Payment["method"] {
+  switch (value.toLowerCase()) {
+    case "telebirr": return "telebirr";
+    case "cbe_birr": return "cbe_birr";
+    case "card": return "card";
+    default: return "cash";
+  }
+}
+
+function normalizePaymentType(value: string): Payment["type"] {
+  switch (value.toLowerCase()) {
+    case "renewal": return "renewal";
+    case "adjustment": return "adjustment";
+    case "steam": return "steam";
+    default: return "membership";
+  }
+}
 
 /**
  * TEMPORARY development bridge: maps the legacy demo regular member "m1"
@@ -59,6 +89,7 @@ export default function MemberPortal() {
       currentMemberId === "m1" ||
       currentMemberId === REGULAR_DEMO_UUID ||
       state.members.find(m => m.id === currentMemberId)?.category === "REGULAR");
+  const isStudentUser = !isAerobicsUser && !isRegularUser && state.currentUser?.category === "STUDENT";
 
   const isMuslimUser =
     !isAerobicsUser &&
@@ -72,8 +103,12 @@ export default function MemberPortal() {
   const [aerobicsState, setAerobicsState] = useState<AerobicsDashboardState>({ status: "loading" });
   // Async state for Regular live Supabase integration
   const [regularState, setRegularState] = useState<RegularDashboardState>({ status: "loading" });
+<<<<<<< HEAD
   // Async state for Muslim live Supabase integration
   const [muslimState, setMuslimState] = useState<RegularDashboardState>({ status: "loading" });
+=======
+  const [studentState, setStudentState] = useState<StudentDashboardState>({ status: "loading" });
+>>>>>>> origin/kb
   const [fetchTrigger, setFetchTrigger] = useState(0);
 
   useEffect(() => {
@@ -90,7 +125,7 @@ export default function MemberPortal() {
       .then(res => {
         if (isMounted) setAerobicsState(res);
       })
-      .catch(err => {
+      .catch(() => {
         if (isMounted) setAerobicsState({ status: "error", error: "Failed to connect to database" });
       });
 
@@ -111,12 +146,33 @@ export default function MemberPortal() {
       .then(res => {
         if (isMounted) setRegularState(res);
       })
-      .catch(err => {
+      .catch(() => {
         if (isMounted) setRegularState({ status: "error", error: "Failed to connect to database" });
       });
 
     return () => { isMounted = false; };
   }, [isRegularUser, currentMemberId, fetchTrigger]);
+
+  useEffect(() => {
+    if (!isStudentUser) return;
+    let isMounted = true;
+    setStudentState({ status: "loading" });
+    fetchStudentDashboardData().then(result => {
+      if (isMounted) setStudentState(result);
+    }).catch((error: unknown) => {
+      console.error("[StudentDashboard] Unexpected dashboard load failure", {
+        name: error instanceof Error ? error.name : "unknown",
+        message: error instanceof Error ? error.message : "unknown",
+      });
+      if (isMounted) setStudentState({
+        status: "error",
+        error: error instanceof TypeError
+          ? "The database could not be reached. Check your connection and retry."
+          : "Student dashboard data could not be loaded. Retry in a moment.",
+      });
+    });
+    return () => { isMounted = false; };
+  }, [isStudentUser, state.currentUser?.id, state.currentUser?.role, state.currentUser?.category, fetchTrigger]);
 
   // Synchronize currentUser.name in global state with live Supabase name for Aerobics customers
   useEffect(() => {
@@ -273,6 +329,7 @@ export default function MemberPortal() {
         </div>
       );
     }
+<<<<<<< HEAD
   } else if (isMuslimUser) {
     if (muslimState.status === "loading") {
       return (
@@ -314,6 +371,13 @@ export default function MemberPortal() {
       );
     }
   } else if (!fallbackMember && !state.currentUser) {
+=======
+  } else if (isStudentUser) {
+    if (studentState.status === "loading") return <PortalState title="Loading Student Dashboard..." message="Retrieving your membership and attendance from Supabase." />;
+    if (studentState.status === "error") return <PortalState title="Unable to Load Student Dashboard" message={studentState.error} retry={() => setFetchTrigger(value => value + 1)} />;
+    if (studentState.status === "not_found") return <PortalState title={t("member.noProfile")} message={studentState.message} />;
+  } else if (!fallbackMember) {
+>>>>>>> origin/kb
     return (
       <div className="min-h-[100dvh] bg-zinc-950 text-white flex items-center justify-center p-4">
         <div className="text-center">
@@ -338,7 +402,30 @@ export default function MemberPortal() {
   let expired: boolean;
   let countdownState: "active" | "expiring" | "expired";
 
-  if (isAerobicsUser && aerobicsState.status === "success") {
+  if (isStudentUser && studentState.status === "success") {
+    const data = studentState.data;
+    category = "STUDENT";
+    member = {
+      id: data.customer.id, name: data.customer.fullName, phone: data.customer.phone, email: data.customer.email || "",
+      memberId: data.customer.customerCode, planId: data.membership?.planId || data.requestedPlan?.id || "",
+      joinDate: data.membership?.startDate || data.customer.joinDate || "—", expiryDate: data.membership?.endDate || "—",
+      status: (data.customer.verificationStatus !== "VERIFIED" ? "inactive" : data.membership?.status || "inactive").toLowerCase() as Member["status"],
+      lastVisit: data.attendance.lastVisit, emergencyContact: "", emergencyPhone: "", medicalNotes: "",
+      emailNotifications: true, balanceDue: data.balanceDue || 0, category: "STUDENT",
+      studentId: data.customer.studentId, institution: data.customer.institution, studentVerified: data.customer.verificationStatus === "VERIFIED",
+    };
+    const studentPlan = data.membership ? { id: data.membership.planId, name: data.membership.planName, price: data.membership.priceAtPurchase,
+      durationDays: data.membership.planDurationDays, perks: data.membership.planBenefits?.split(",").map(value => value.trim()).filter(Boolean) || [], active: true, applicableCategories: ["STUDENT"] as CustomerCategory[] }
+      : data.requestedPlan ? { id: data.requestedPlan.id, name: data.requestedPlan.name, price: data.requestedPlan.price,
+        durationDays: data.requestedPlan.durationDays, perks: data.requestedPlan.benefits?.split(",").map(value => value.trim()).filter(Boolean) || [], active: true, applicableCategories: ["STUDENT"] as CustomerCategory[] }
+      : undefined;
+    plan = studentPlan;
+    group = undefined; trainer = undefined;
+    daysRemaining = data.membership?.daysRemaining || 0; totalDays = data.membership?.planDurationDays || 30;
+    progress = data.membership?.progressPercent || 0; expired = !data.membership || data.membership.isExpired;
+    countdownState = !data.membership || expired ? "expired" : daysRemaining <= 7 ? "expiring" : "active";
+    visits = data.attendance.recent.map(item => ({ id: item.id, memberId: data.customer.id, timestamp: item.checkedInAt, checkedInBy: item.checkInMethod, category: "STUDENT" as CustomerCategory, accessStatus: "allowed" as const }));
+  } else if (isAerobicsUser && aerobicsState.status === "success") {
     const { customer, membership, session, trainer: liveTrainer, attendance } = aerobicsState.data;
     category = "AEROBICS";
     member = {
@@ -350,7 +437,7 @@ export default function MemberPortal() {
       planId: membership?.plan?.id || "",
       joinDate: membership?.startDate || "—",
       expiryDate: membership?.endDate || "—",
-      status: membership ? ((membership.status.toLowerCase() as any) || "active") : "expired",
+      status: membership ? normalizeMemberStatus(membership.status) : "expired",
       lastVisit: attendance[0]?.checkedInAt || null,
       emergencyContact: "",
       emergencyPhone: "",
@@ -426,7 +513,7 @@ export default function MemberPortal() {
       planId: livePlan?.id || "",
       joinDate: membership?.startDate || customer.joinDate || "—",
       expiryDate: membership?.endDate || "—",
-      status: (customer.status.toLowerCase() as any) || "active",
+      status: normalizeMemberStatus(customer.status),
       lastVisit: attendance.lastVisit,
       emergencyContact: "",
       emergencyPhone: "",
@@ -554,15 +641,22 @@ export default function MemberPortal() {
   }
 
   const CategoryIcon = CATEGORY_ICONS[category];
+<<<<<<< HEAD
   const rules = state.accessRules.filter(r => r.category === category && r.active);
   const payments = (isRegularUser && regularState.status === "success")
+=======
+  const rules = isStudentUser && studentState.status === "success"
+    ? studentState.data.accessRules.map(rule => ({ id: rule.id, category: "STUDENT" as CustomerCategory, days: rule.days, startTime: rule.startTime, endTime: rule.endTime, description: rule.description, active: true }))
+    : state.accessRules.filter(r => r.category === category && r.active);
+  const payments = isRegularUser && regularState.status === "success"
+>>>>>>> origin/kb
     ? regularState.data.payments.map(p => ({
         id: p.id,
         memberId: member.id,
         amount: p.amount,
         date: p.paidAt ? p.paidAt.split("T")[0] : (p.createdAt ? p.createdAt.split("T")[0] : "—"),
-        method: (p.paymentMethod.toLowerCase() as any) || "cash",
-        type: (p.serviceType.toLowerCase() as any) || "membership",
+        method: normalizePaymentMethod(p.paymentMethod),
+        type: normalizePaymentType(p.serviceType),
         note: p.notes || "",
       }))
     : (isMuslimUser && muslimState.status === "success")
@@ -581,10 +675,17 @@ export default function MemberPortal() {
         memberId: member.id,
         amount: p.amount,
         date: p.paidAt ? p.paidAt.split("T")[0] : (p.createdAt ? p.createdAt.split("T")[0] : "—"),
-        method: (p.paymentMethod.toLowerCase() as any) || "cash",
-        type: (p.serviceType.toLowerCase() as any) || "membership",
+        method: normalizePaymentMethod(p.paymentMethod),
+        type: normalizePaymentType(p.serviceType),
         note: p.notes || "",
       }))
+    : isStudentUser && studentState.status === "success"
+    ? studentState.data.payments.map(payment => {
+        const normalizedMethod = payment.method.toLowerCase();
+        const method = normalizedMethod === "telebirr" ? "telebirr" : normalizedMethod === "cbe_birr" ? "cbe_birr" : normalizedMethod === "card" ? "card" : "cash";
+        return { id: payment.id, memberId: member.id, amount: payment.amount,
+          date: (payment.paidAt || payment.createdAt).split("T")[0], method, type: "membership" as const, note: payment.status };
+      })
     : state.payments.filter(p => p.memberId === member.id).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
   const myLocker = (isRegularUser && regularState.status === "success")
     ? regularState.data.locker
@@ -592,6 +693,9 @@ export default function MemberPortal() {
     ? muslimState.data.locker
     : (isAerobicsUser && aerobicsState.status === "success")
     ? aerobicsState.data.locker
+    : isStudentUser && studentState.status === "success" && studentState.data.locker
+    ? { locker: { number: studentState.data.locker.number, section: studentState.data.locker.section, keyTag: "" },
+        assignment: { assignedAt: studentState.data.locker.assignedAt, dueDate: studentState.data.locker.dueDate } } as ReturnType<typeof memberActiveLocker>
     : memberActiveLocker(state, member.id);
   const steamLeft = state.steamAccess
     .filter(s => s.customerId === member.id && new Date(s.endDate).getTime() >= Date.now() && s.remainingVisits > 0)
@@ -644,12 +748,17 @@ export default function MemberPortal() {
                         {regularState.data.customer.status.toUpperCase()}
                       </span>
                     )}
+<<<<<<< HEAD
                     {isMuslimUser && muslimState.status === "success" && (
                       <span className="px-2.5 py-0.5 rounded-full text-xs font-bold uppercase tracking-wider bg-zinc-800 text-lime-400 border border-lime-400/20">
                         {muslimState.data.customer.status.toUpperCase()}
                       </span>
                     )}
                     <span className={`px-3 py-1 rounded-full text-xs font-bold ${countdownState === "active" ? "bg-lime-400/20 text-lime-400" : countdownState === "expiring" ? "bg-yellow-400/20 text-yellow-400" : "bg-red-400/20 text-red-400"}`}>{t(`countdown.${countdownState}`)}</span>
+=======
+                    {isStudentUser && studentState.status === "success" && <span className={`px-2.5 py-0.5 rounded-full text-xs font-bold uppercase tracking-wider ${studentState.data.customer.verificationStatus === "VERIFIED" && studentState.data.membership?.status === "ACTIVE" ? "bg-lime-400/20 text-lime-400" : studentState.data.customer.verificationStatus === "REJECTED" ? "bg-red-400/20 text-red-400" : "bg-yellow-400/20 text-yellow-400"}`}>{studentState.data.customer.verificationStatus !== "VERIFIED" ? studentState.data.customer.verificationStatus : studentState.data.membership?.status || "NO MEMBERSHIP"}</span>}
+                    {!(isStudentUser && studentState.status === "success" && !studentState.data.membership) && <span className={`px-3 py-1 rounded-full text-xs font-bold ${countdownState === "active" ? "bg-lime-400/20 text-lime-400" : countdownState === "expiring" ? "bg-yellow-400/20 text-yellow-400" : "bg-red-400/20 text-red-400"}`}>{t(`countdown.${countdownState}`)}</span>}
+>>>>>>> origin/kb
                     <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-semibold bg-zinc-800 text-zinc-300">
                       <CategoryIcon weight="fill" className="w-3.5 h-3.5 text-lime-400" />{categoryLabelOf(state, category)}
                     </span>
@@ -661,27 +770,41 @@ export default function MemberPortal() {
                   </div>
                   <p className="text-zinc-500 text-sm">{member.memberId} · {t("member.memberSince", { date: formatDateDisplay(member.joinDate) })}</p>
                   <div className="flex flex-wrap gap-x-6 gap-y-1 mt-3 text-sm">
+<<<<<<< HEAD
                     <span className="text-zinc-400">{t("countdown.plan")}: <span className="text-white font-semibold">{plan?.name || (isMuslimUser ? "No active plan" : "No Plan")}</span></span>
                     {plan?.price != null && (
                       <span className="text-zinc-400">Price: <span className="text-lime-400 font-semibold">{plan.price} ETB</span></span>
                     )}
                     {plan && member.joinDate && member.joinDate !== "—" && (
                       <span className="text-zinc-400">Start: <span className="text-white font-semibold">{formatDateDisplay(member.joinDate)}</span></span>
+=======
+                    <span className="text-zinc-400">{isStudentUser && studentState.status === "success" && !studentState.data.membership ? "Selected plan" : t("countdown.plan")}: <span className="text-white font-semibold">{plan?.name || "No Plan"}</span></span>
+                    {plan?.price != null && (
+                      <span className="text-zinc-400">Price: <span className="text-lime-400 font-semibold">{plan.price} ETB</span></span>
+                    )}
+                    {member.joinDate && member.joinDate !== "—" && (
+                      <span className="text-zinc-400">{isStudentUser && studentState.status === "success" && !studentState.data.membership ? "Member since:" : "Start:"} <span className="text-white font-semibold">{formatDateDisplay(member.joinDate)}</span></span>
+>>>>>>> origin/kb
                     )}
                     {plan && member.expiryDate && member.expiryDate !== "—" && (
                       <span className="text-zinc-400">End: <span className="text-white font-semibold">{formatDateDisplay(member.expiryDate)}</span></span>
                     )}
-                    <span className="text-zinc-400">{t("countdown.steamLeft")}: <span className="text-cyan-400 font-semibold">{steamLeft}</span></span>
+                    {!isStudentUser && <span className="text-zinc-400">{t("countdown.steamLeft")}: <span className="text-cyan-400 font-semibold">{steamLeft}</span></span>}
                   </div>
                 </div>
-                <div className="flex items-center gap-5">
+                {!(isStudentUser && studentState.status === "success" && !studentState.data.membership) && <div className="flex items-center gap-5">
                   <div className="text-center">
                     <Hourglass weight="fill" className={`w-6 h-6 mx-auto mb-1 ${countdownState === "active" ? "text-lime-400" : countdownState === "expiring" ? "text-yellow-400" : "text-red-400"}`} />
                     <div className="text-[11px] uppercase tracking-wide text-zinc-500">{countdownState === "expired" ? t("countdown.expired") : daysRemaining === 1 ? t("countdown.dayLeft", { n: daysRemaining }) : t("countdown.daysLeft", { n: daysRemaining })}</div>
                   </div>
                   <div className={`text-5xl md:text-6xl font-black tabular-nums ${countdownState === "active" ? "text-lime-400" : countdownState === "expiring" ? "text-yellow-400" : "text-red-400"}`}>{daysRemaining}</div>
-                </div>
+                </div>}
               </div>
+              {isStudentUser && studentState.status === "success" && studentState.data.membership && studentState.data.customer.verificationStatus !== "VERIFIED" && <div className="relative mt-4 rounded-xl border border-yellow-400/20 bg-yellow-400/5 p-4 text-sm text-yellow-200">Access is paused until reception verifies your student status.</div>}
+              {isStudentUser && studentState.status === "success" && !studentState.data.membership ? <div className="relative mt-5 rounded-xl border border-yellow-400/20 bg-yellow-400/5 p-4 text-sm">
+                <p className="font-semibold text-yellow-300">{studentState.data.customer.verificationStatus === "VERIFIED" ? "No active membership" : studentState.data.customer.verificationStatus === "REJECTED" ? "Student verification was rejected" : "Student verification pending"}</p>
+                <p className="text-zinc-400 mt-1">{studentState.data.customer.verificationStatus === "VERIFIED" ? "Choose a plan and submit payment to activate your membership." : "Visit reception with your student ID. Membership and student access remain inactive until staff verification and payment are complete."}</p>
+              </div> : <>
               <div className="relative mt-5 bg-zinc-800 rounded-full h-3 overflow-hidden">
                 <div className={`h-full rounded-full transition-all duration-500 ${countdownState === "expired" ? "bg-red-400" : countdownState === "expiring" ? "bg-gradient-to-r from-yellow-400 to-amber-300" : "bg-gradient-to-r from-lime-400 to-lime-300"}`} style={{ width: `${progress}%` }} />
               </div>
@@ -689,9 +812,10 @@ export default function MemberPortal() {
                 <span>{t("countdown.used", { pct: Math.round(progress) })}</span>
                 <span>{expired ? t("countdown.expired") : t("countdown.expiresOn", { date: formatDateDisplay(member.expiryDate) })}</span>
               </div>
-              <button onClick={() => setTab("renew")} className="relative mt-4 w-full sm:w-auto bg-lime-400 text-zinc-950 px-5 py-2.5 rounded-xl font-bold text-sm hover:bg-lime-300 transition-colors active:scale-[0.97] inline-flex items-center justify-center gap-2">
-                <ArrowRight weight="bold" className="w-4 h-4" /> {t("countdown.renewNow")}
-              </button>
+              </>}
+              {!(isStudentUser && studentState.status === "success" && !studentState.data.membership && studentState.data.customer.verificationStatus !== "VERIFIED") && <button onClick={() => setTab("renew")} className="relative mt-4 w-full sm:w-auto bg-lime-400 text-zinc-950 px-5 py-2.5 rounded-xl font-bold text-sm hover:bg-lime-300 transition-colors active:scale-[0.97] inline-flex items-center justify-center gap-2">
+                <ArrowRight weight="bold" className="w-4 h-4" /> {isStudentUser && studentState.status === "success" && !studentState.data.membership ? "Choose a plan" : t("countdown.renewNow")}
+              </button>}
             </motion.div>
 
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -704,7 +828,13 @@ export default function MemberPortal() {
                 },
                 {
                   label: t("member.totalVisits"),
+<<<<<<< HEAD
                   value: (isRegularUser && regularState.status === "success")
+=======
+                  value: isStudentUser && studentState.status === "success"
+                    ? String(studentState.data.attendance.total)
+                    : isRegularUser && regularState.status === "success"
+>>>>>>> origin/kb
                     ? String(regularState.data.attendance.total)
                     : (isMuslimUser && muslimState.status === "success")
                     ? String(muslimState.data.attendance.total)
@@ -719,8 +849,13 @@ export default function MemberPortal() {
                   icon: CreditCard,
                 },
                 {
+<<<<<<< HEAD
                   label: isRegularUser || isMuslimUser ? "Balance Due" : t("member.balanceDue"),
                   value: isMuslimUser ? "Not available" : isRegularUser ? "—" : formatETB(member.balanceDue),
+=======
+                  label: "Balance Due",
+                  value: isStudentUser && studentState.status === "success" && studentState.data.balanceDue === null ? "—" : isRegularUser && regularState.status === "success" ? "—" : formatETB(isStudentUser && studentState.status === "success" ? studentState.data.balanceDue ?? 0 : member.balanceDue),
+>>>>>>> origin/kb
                   icon: Lightning,
                 },
               ].map((s, i) => (
@@ -795,13 +930,37 @@ export default function MemberPortal() {
                 </div>
                 {category === "STUDENT" && (
                   <div className="mt-4 bg-zinc-800/50 rounded-xl p-4 space-y-2 text-sm">
-                    <div className="flex justify-between"><span className="text-zinc-500">Student ID</span><span>{member.studentId || "Not provided"}</span></div>
+                    <div className="flex justify-between"><span className="text-zinc-500">Student ID</span><span>{member.studentId ? `${"•".repeat(Math.max(0, member.studentId.length - 4))}${member.studentId.slice(-4)}` : "Not provided"}</span></div>
                     <div className="flex justify-between"><span className="text-zinc-500">Institution</span><span>{member.institution || "Not provided"}</span></div>
                     <div className="flex justify-between">
                       <span className="text-zinc-500">Student rate</span>
-                      <span className={member.studentVerified ? "text-lime-400 font-semibold" : "text-yellow-400 font-semibold"}>{member.studentVerified ? "Verified" : "Awaiting verification at reception"}</span>
+                      <span className={member.studentVerified ? "text-lime-400 font-semibold" : "text-yellow-400 font-semibold"}>{member.studentVerified ? "Verified" : isStudentUser && studentState.status === "success" && studentState.data.customer.verificationStatus === "REJECTED" ? "Rejected — contact reception" : "Awaiting verification at reception"}</span>
                     </div>
                     <p className="text-xs text-zinc-500">Show your student card at reception to activate the reduced rate.</p>
+                  </div>
+                )}
+                {category === "STUDENT" && isStudentUser && studentState.status === "success" && (
+                  <div className="mt-4 border-t border-zinc-800 pt-4">
+                    <h4 className="font-semibold text-sm mb-2">Upcoming classes</h4>
+                    {studentState.data.classSchedule.length === 0 ? (
+                      <p className="text-sm text-zinc-500">No upcoming class bookings.</p>
+                    ) : (
+                      <div className="space-y-2">
+                        {studentState.data.classSchedule.map(session => (
+                          <div key={session.id} className="rounded-xl bg-zinc-800/50 p-3 text-sm">
+                            <div className="flex items-start justify-between gap-3">
+                              <span className="font-semibold">{session.className}</span>
+                              <span className="text-xs text-zinc-400">{session.bookingStatus}</span>
+                            </div>
+                            <p className="mt-1 text-xs text-zinc-400">
+                              {new Date(session.startAt).toLocaleString(locale, { weekday: "short", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
+                              {session.endAt ? ` – ${new Date(session.endAt).toLocaleTimeString(locale, { hour: "2-digit", minute: "2-digit" })}` : ""}
+                            </p>
+                            {session.description && <p className="mt-1 text-xs text-zinc-500">{session.description}</p>}
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 )}
                 <p className="text-xs text-zinc-600 mt-3">Only reception or the owner can change your category.</p>
@@ -850,6 +1009,7 @@ export default function MemberPortal() {
                       <div className="flex items-center gap-3">
                         <span className="text-zinc-300 font-medium">{p.date}</span>
                         <span className="text-zinc-500 text-xs">{METHOD_LABELS[p.method] || p.method}</span>
+                        {isStudentUser && <span className={`text-[10px] uppercase ${p.note === "PENDING" ? "text-yellow-400" : "text-zinc-500"}`}>{p.note}</span>}
                       </div>
                       <span className="text-lime-400 font-bold">{formatETB(p.amount)}</span>
                     </div>
@@ -864,20 +1024,22 @@ export default function MemberPortal() {
           isAerobicsUser ? (
             <AerobicsRenewView customerId={member.id} />
           ) : isRegularUser ? (
-            <RegularRenewView customerId={member.id} />
+            <RegularRenewView customerId={member.id} onRenewalSubmitted={() => setFetchTrigger(value => value + 1)} />
+          ) : isStudentUser ? (
+            <RegularRenewView customerId={member.id} category="STUDENT" onRenewalSubmitted={() => setFetchTrigger(value => value + 1)} />
           ) : (
             <RenewView member={member} category={category} />
           )
         )}
         {tab === "steam" && (
-          isAerobicsUser || isRegularUser ? (
+          isAerobicsUser || isRegularUser || isStudentUser ? (
             <CustomerSteamView
               customerId={member.id}
               customerCode={member.memberId}
               customerName={member.name}
             />
           ) : (
-            <SteamView member={member} />
+            <SteamView />
           )
         )}
         {tab === "profile" && (
@@ -886,7 +1048,7 @@ export default function MemberPortal() {
               customerId={member.id}
               onProfileUpdated={() => setFetchTrigger(prev => prev + 1)}
             />
-          ) : isRegularUser ? (
+          ) : isRegularUser || isStudentUser ? (
             <RegularProfileView
               customerId={member.id}
               onProfileUpdated={() => setFetchTrigger(prev => prev + 1)}
@@ -909,6 +1071,13 @@ export default function MemberPortal() {
       </div>
     </div>
   );
+}
+
+function PortalState({ title, message, retry }: { title: string; message: string; retry?: () => void }) {
+  return <div className="min-h-[100dvh] bg-zinc-950 text-white flex items-center justify-center p-4"><div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6 max-w-md text-center">
+    <User className="w-12 h-12 text-zinc-500 mx-auto mb-3" /><h2 className="text-xl font-bold mb-2">{title}</h2><p className="text-zinc-400 text-sm">{message}</p>
+    {retry && <button onClick={retry} className="mt-5 bg-lime-400 text-zinc-950 px-5 py-2.5 rounded-xl font-bold text-sm inline-flex items-center gap-2"><ArrowClockwise weight="bold" className="w-4 h-4" />Try Again</button>}
+  </div></div>;
 }
 
 function RenewView({ member, category }: { member: Member; category: CustomerCategory }) {
@@ -1004,8 +1173,8 @@ function CustomerSteamView({
       setPasses(accessRes.data);
       setUsageLogs(usageRes.data);
       setLoading(false);
-    } catch (err: any) {
-      setError(err?.message || "Unable to load Steam information. Please try again.");
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Unable to load Steam information. Please try again.");
       setLoading(false);
     }
   }, [customerId]);
@@ -1070,24 +1239,13 @@ function CustomerSteamView({
   );
 }
 
-function SteamView({ member }: { member: Member }) {
-  const { state } = useGym();
-  const t = useT();
-  if (!state.settings.steamEnabled) {
-    return (
-      <div className="max-w-lg mx-auto">
-        <div className={`${CARD} text-center`}>
-          <Drop weight="fill" className="w-8 h-8 text-cyan-400 mx-auto mb-2" />
-          <p className="text-sm text-zinc-400">{t("member.steamUnavailable")}</p>
-        </div>
-      </div>
-    );
-  }
+function SteamView() {
   return (
-    <div className="max-w-lg mx-auto space-y-4">
-      <SteamOverview memberId={member.id} />
-      <SteamPurchaseForm member={member} actor={member.name} />
-      <SteamUsageLog memberId={member.id} />
+    <div className="max-w-lg mx-auto">
+      <div className={`${CARD} text-center`}>
+        <Drop weight="fill" className="w-8 h-8 text-cyan-400 mx-auto mb-2" />
+        <p className="text-sm text-zinc-300">Steam access and purchases are available through your verified customer profile or at reception.</p>
+      </div>
     </div>
   );
 }

@@ -2,6 +2,7 @@ import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Users, Coins, TrendUp, Receipt, Gear, Plus, X, MagnifyingGlass, User, ShieldCheck, Drop } from "@phosphor-icons/react";
 import LockersManagement from "./LockersManagement";
+import SteamManagement from "./SteamManagement";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 import { useGym, useT, formatETB, addAudit } from "../context/GymContext";
 import { toast } from "sonner";
@@ -12,7 +13,7 @@ import { ReportsView } from "./AdminReports";
 import { useDashboardStats } from "../hooks/use-dashboard-stats";
 import { useDashboardSupplementalData } from "../hooks/use-dashboard-supplemental-data";
 
-const TABS = ["dashboard", "customers", "categories", "plans", "finances", "reports", "lockers", "settings"] as const;
+const TABS = ["dashboard", "customers", "categories", "plans", "finances", "reports", "steam", "lockers", "settings"] as const;
 type Tab = (typeof TABS)[number];
 const TAB_LABEL: Record<Tab, string> = {
   dashboard: "admin.tab.dashboard",
@@ -21,6 +22,7 @@ const TAB_LABEL: Record<Tab, string> = {
   plans: "admin.tab.plans",
   finances: "admin.tab.finances",
   reports: "admin.tab.reports",
+  steam: "Steam / Sauna",
   lockers: "admin.tab.lockers",
   settings: "admin.tab.settings",
 };
@@ -54,7 +56,8 @@ export default function AdminPortal() {
             {tab === "plans" && <PlansView />}
             {tab === "finances" && <FinancesView />}
             {tab === "reports" && <ReportsView />}
-            {tab === "lockers" && <LockersManagement />}
+            {tab === "steam" && <SteamManagement canManageServices />}
+            {tab === "lockers" && <LockersManagement canManage />}
             {tab === "settings" && <SettingsView />}
           </motion.div>
         </AnimatePresence>

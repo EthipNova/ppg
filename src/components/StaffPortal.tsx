@@ -1,12 +1,12 @@
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Users, MagnifyingGlass, Lightning, CheckCircle, XCircle, User, Plus, Envelope, Phone, Clock, Warning, ShieldCheck, PaperPlaneTilt, GraduationCap, MoonStars, MusicNotes, Sparkle, Prohibit, Drop, Lockers } from "@phosphor-icons/react";
+import { Users, MagnifyingGlass, Lightning, CheckCircle, User, Plus, Envelope, Clock, Warning, PaperPlaneTilt, GraduationCap, MoonStars, MusicNotes, Sparkle, Prohibit, Lockers } from "@phosphor-icons/react";
 import { useGym, useT, formatETB, generateId, sendEmail, addAudit, computeMemberStatus, evaluateAccess, planAppliesToCategory, categoryLabelOf, memberActiveLocker } from "../context/GymContext";
-import { SteamOverview, SteamPurchaseForm, SteamCheckInButton, SteamActiveBadge } from "./SteamPanel";
 import type { AccessDecision, CustomerCategory, Member, Visit } from "../types";
 import { toast } from "sonner";
 import { EMAIL_TEMPLATES, ALL_CATEGORIES } from "../constants";
 import LockersManagement from "./LockersManagement";
+import SteamManagement from "./SteamManagement";
 
 const CATEGORY_ICONS: Record<CustomerCategory, typeof Sparkle> = { REGULAR: Sparkle, STUDENT: GraduationCap, MUSLIM: MoonStars, AEROBICS: MusicNotes };
 function CategoryBadge({ category }: { category: CustomerCategory }) {
@@ -99,6 +99,12 @@ function CheckInView() {
   };
 
   const handleCheckIn = (member: Member) => {
+    if (member.category === "STUDENT" && member.studentVerified !== true) {
+      const reason = "Student verification is pending; reception must approve student documents before gym access.";
+      addAudit(dispatch, "Access denied", actor, `${member.name} · ${reason}`);
+      toast.error(reason);
+      return;
+    }
     const status = computeMemberStatus(member, state.settings);
     if (status === "expired" || status === "blocked") {
       toast.error(t("staff.expiredCannot", { name: member.name, status: t(`status.${status}`).toLowerCase() }));
@@ -162,7 +168,7 @@ function CheckInView() {
                 <div className="w-12 h-12 bg-zinc-800 rounded-full flex items-center justify-center"><User className="w-6 h-6 text-zinc-400" /></div>
                 <div>
                   <div className="font-bold">{m.name}</div>
-                  <div className="text-sm text-zinc-500 flex items-center gap-3"><span>{m.memberId}</span><span>{m.phone}</span>{statusBadge(m)}<SteamActiveBadge memberId={m.id} /><CategoryBadge category={m.category || "REGULAR"} /><LockerBadge memberId={m.id} /></div>
+                  <div className="text-sm text-zinc-500 flex items-center gap-3"><span>{m.memberId}</span><span>{m.phone}</span>{statusBadge(m)}<CategoryBadge category={m.category || "REGULAR"} /><LockerBadge memberId={m.id} /></div>
                 </div>
               </div>
               <button onClick={() => handleCheckIn(m)} disabled={computeMemberStatus(m, state.settings) === "expired" || computeMemberStatus(m, state.settings) === "blocked"}
@@ -279,49 +285,7 @@ function RegisterView() {
 }
 
 function SteamView() {
-  const { state } = useGym();
-  const [selectedId, setSelectedId] = useState("");
-  const [search, setSearch] = useState("");
-  const actor = state.currentUser?.name || "Reception";
-  const member = state.members.find(m => m.id === selectedId);
-  const filtered = state.members.filter(m => {
-    if (!search) return false;
-    const q = search.toLowerCase();
-    return m.name.toLowerCase().includes(q) || m.phone.includes(q) || m.memberId.toLowerCase().includes(q);
-  });
-
-  return (
-    <div className="space-y-6">
-      <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6 space-y-4">
-        <h3 className="font-bold text-lg flex items-center gap-2"><Drop weight="fill" className="w-5 h-5 text-cyan-400" /> Steam passes</h3>
-        <div className="relative">
-          <MagnifyingGlass className="w-5 h-5 text-zinc-500 absolute left-4 top-1/2 -translate-y-1/2" />
-          <input value={search} onChange={e => { setSearch(e.target.value); setSelectedId(""); }} placeholder="Search a member..." className="w-full bg-zinc-800 border border-zinc-700 rounded-xl pl-11 pr-4 py-3 text-white placeholder:text-zinc-500 focus:outline-none focus:border-cyan-400/50" />
-        </div>
-        {search && !member && filtered.length > 0 && (
-          <div className="space-y-2">
-            {filtered.map(m => (
-              <button key={m.id} onClick={() => { setSelectedId(m.id); setSearch(""); }} className="w-full text-left bg-zinc-800/50 hover:bg-zinc-800 border border-zinc-700 rounded-xl px-4 py-3 flex items-center justify-between">
-                <span className="font-semibold">{m.name}</span>
-                <span className="text-sm text-zinc-500">{m.memberId} · <SteamActiveBadge memberId={m.id} /></span>
-              </button>
-            ))}
-          </div>
-        )}
-        {search && !member && filtered.length === 0 && <p className="text-sm text-zinc-500">No member found.</p>}
-        {member && (
-          <div className="grid md:grid-cols-2 gap-4">
-            <div className="space-y-4">
-              <SteamOverview memberId={member.id} />
-              <SteamCheckInButton member={member} actor={actor} />
-              <button onClick={() => setSelectedId("")} className="w-full bg-zinc-800 text-zinc-300 text-sm font-semibold py-2.5 rounded-xl hover:bg-zinc-700">Change member</button>
-            </div>
-            <SteamPurchaseForm member={member} actor={actor} />
-          </div>
-        )}
-      </div>
-    </div>
-  );
+  return <SteamManagement canManageServices={false} />;
 }
 
 function CommunicateView() {

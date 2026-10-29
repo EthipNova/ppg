@@ -200,10 +200,11 @@ export function GymProvider({ children }: { children: ReactNode }) {
         const { session } = await getCurrentSession();
         if (session?.user && isMounted) {
           const trusted = await resolveTrustedUserRole(session.user.id);
-          if (trusted && isMounted) {
+          if (trusted?.status === "active" && isMounted) {
             dispatch({ type: "SET_USER", payload: trusted.authUser });
           } else if (isMounted) {
-            // Keep portal access blocked if no trusted active role is established
+            // A resolved profile is not necessarily authorized; only active roles
+            // may be restored after a refresh.
             await signOutUser();
             dispatch({ type: "SET_USER", payload: null });
           }
@@ -224,7 +225,7 @@ export function GymProvider({ children }: { children: ReactNode }) {
       if (event === "SIGNED_IN" || event === "TOKEN_REFRESHED") {
         if (session?.user) {
           const trusted = await resolveTrustedUserRole(session.user.id);
-          if (trusted && isMounted) {
+          if (trusted?.status === "active" && isMounted) {
             dispatch({ type: "SET_USER", payload: trusted.authUser });
           } else if (isMounted) {
             await signOutUser();

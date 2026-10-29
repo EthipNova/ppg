@@ -201,7 +201,7 @@ function AppShell() {
           <Route
             path="/trainer"
             element={
-              <ProtectedRoute allowedRoles={["trainer", "owner"]}>
+              <ProtectedRoute allowedRoles={["trainer"]}>
                 <TrainerPortal />
               </ProtectedRoute>
             }

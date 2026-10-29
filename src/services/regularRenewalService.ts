@@ -72,7 +72,8 @@ const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12
  * Reads real customer, active membership, and eligible regular plans from Supabase.
  */
 export async function fetchRegularRenewalData(
-  customerId: string
+  customerId: string,
+  category: "REGULAR" | "STUDENT" = "REGULAR"
 ): Promise<RegularRenewalState> {
   if (!customerId || !UUID_REGEX.test(customerId)) {
     return {
@@ -136,7 +137,7 @@ export async function fetchRegularRenewalData(
 
     const plansPromise = supabase
       .from("plans")
-      .select("id, name, price, duration_days, description, benefits, is_active")
+      .select("id, name, price, duration_days, description, benefits, is_active, applicable_categories")
       .eq("is_active", true)
       .order("price", { ascending: true });
 
@@ -180,12 +181,15 @@ export async function fetchRegularRenewalData(
       };
     }
 
-    // Filter plans for Regular category (exclude plans exclusive to Aerobics)
+    // Filter plans to the signed-in member's database-configured category.
     const rawPlans = (plansRes.data || []) as PlanDbRow[];
-    const regularPlans = rawPlans.filter(p =>
-      !p.name.toLowerCase().includes("aerobics") && !p.name.toLowerCase().includes("dance")
-    );
-    const applicablePlans = regularPlans.length > 0 ? regularPlans : rawPlans;
+    const categorizedPlans = rawPlans.filter(p => Array.isArray((p as any).applicable_categories)
+      && (p as any).applicable_categories.includes(category));
+    const legacyRegularPlans = rawPlans.filter(p =>
+      !p.name.toLowerCase().includes("aerobics") && !p.name.toLowerCase().includes("dance"));
+    const applicablePlans = category === "STUDENT"
+      ? categorizedPlans
+      : (categorizedPlans.length > 0 ? categorizedPlans : legacyRegularPlans.length > 0 ? legacyRegularPlans : rawPlans);
 
     const availablePlans: RegularRenewalPlan[] = applicablePlans.map(p => ({
       id: p.id,
@@ -258,6 +262,8 @@ export function validateProofFile(file: File | null | undefined): ProofFileValid
 
 export interface SubmitRegularRenewalProofParams {
   customerId: string;
+  category?: "REGULAR" | "STUDENT";
+  idempotencyKey?: string;
   membershipId: string | null;
   plan: RegularRenewalPlan;
   paymentMethod: "telebirr" | "cbe_birr";
@@ -317,9 +323,33 @@ export async function submitRegularRenewalProof(
       };
     }
 
+    if (params.category === "STUDENT") {
+      if (!params.idempotencyKey) {
+        await supabase.storage.from("payment-proofs").remove([storagePath]);
+        return { success: false, error: "Renewal request key is missing. Please retry." };
+      }
+      const method = paymentMethod === "cbe_birr" ? "CBE_BIRR" : "TELEBIRR";
+      // The RPC type is generated after the migration is deployed and schema cache refreshed.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data, error } = await (supabase as any).rpc("request_student_membership_payment", {
+        p_customer_id: customerId,
+        p_plan_id: plan.id,
+        p_payment_method: method,
+        p_proof_path: storagePath,
+        p_idempotency_key: params.idempotencyKey,
+      });
+      if (error) {
+        await supabase.storage.from("payment-proofs").remove([storagePath]);
+        return { success: false, error: error.message };
+      }
+      const result = data as { payment_id?: string; proof_path?: string; replayed?: boolean } | null;
+      if (result?.replayed) await supabase.storage.from("payment-proofs").remove([storagePath]);
+      return { success: true, paymentId: result?.payment_id, filePath: result?.proof_path || storagePath };
+    }
+
     // 4. Record pending payment request in Supabase 'payments' table
     const dbPaymentMethod = paymentMethod === "cbe_birr" ? "CBE_BIRR" : "TELEBIRR";
-    const notes = `Regular renewal request for plan: ${plan.name} (${plan.id}). Payment proof uploaded, awaiting reception verification.`;
+    const notes = `${params.category || "Regular"} renewal request for plan: ${plan.name} (${plan.id}). Payment proof uploaded, awaiting reception verification.`;
 
     const { data: paymentRow, error: paymentError } = await (supabase
       .from("payments") as any)

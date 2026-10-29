@@ -1,5 +1,8 @@
 import { supabase } from "../integrations/supabase/client";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { validateProofFile, MAX_FILE_SIZE_BYTES } from "./regularRenewalService";
+
+const steamDb = supabase as unknown as SupabaseClient;
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -15,35 +18,6 @@ export interface SteamCatalogItem {
   validityLabel: string;
   description: string;
 }
-
-/**
- * Centralized customer catalog configuration.
- * Single source of truth for customer purchase pricing and metadata.
- * Note: Database public.services record has historical price 800 ETB for the 10-visit package;
- * the official customer portal pricing requirement is 1,200 ETB.
- */
-export const STEAM_CATALOG: SteamCatalogItem[] = [
-  {
-    id: "22222222-2222-2222-2222-222222222202",
-    type: "per-visit",
-    name: "Single Session",
-    price: 150,
-    visits: 1,
-    validityDays: 1,
-    validityLabel: "Valid today",
-    description: "One-off soap bath & steam room session",
-  },
-  {
-    id: "22222222-2222-2222-2222-222222222201",
-    type: "package",
-    name: "10-Visit Package",
-    price: 1200,
-    visits: 10,
-    validityDays: 30,
-    validityLabel: "Valid for 30 days",
-    description: "Bundle of 10 soap bath & steam sessions",
-  },
-];
 
 export interface CustomerPendingSteamPayment {
   id: string;
@@ -64,7 +38,6 @@ export interface SubmitSteamPaymentProofParams {
   customerId: string;
   serviceId: string;
   productType: "per-visit" | "package";
-  amount: number;
   paymentMethod: "cbe_birr" | "telebirr";
   file: File;
 }
@@ -80,7 +53,35 @@ export interface SubmitSteamPaymentProofResult {
  * Returns the customer-facing Steam products catalog.
  */
 export async function fetchSteamCatalog(): Promise<SteamCatalogItem[]> {
-  return STEAM_CATALOG;
+  const { data: options, error: optionsError } = await steamDb
+    .from("steam_service_options")
+    .select("service_id, access_type, duration_days, usage_limit")
+    .order("created_at");
+  if (optionsError) throw new Error(`Unable to load Steam services: ${optionsError.message}`);
+  if (!options?.length) return [];
+  const { data: services, error: serviceError } = await steamDb
+    .from("services")
+    .select("id, name, description, price, is_active")
+    .in("id", options.map(option => option.service_id))
+    .eq("is_active", true);
+  if (serviceError) throw new Error(`Unable to load Steam service prices: ${serviceError.message}`);
+  const byId = new Map((services ?? []).map(service => [service.id, service]));
+  return options.flatMap(option => {
+    const service = byId.get(option.service_id);
+    if (!service) return [];
+    const validityDays = Number(option.duration_days);
+    const visits = option.usage_limit === null ? 0 : Number(option.usage_limit);
+    return [{
+      id: service.id,
+      type: option.access_type as SteamCatalogItem["type"],
+      name: service.name,
+      price: Number(service.price),
+      visits,
+      validityDays,
+      validityLabel: `Valid for ${validityDays} day${validityDays === 1 ? "" : "s"}`,
+      description: service.description ?? "",
+    }];
+  });
 }
 
 /**
@@ -95,7 +96,7 @@ export async function fetchCustomerPendingSteamPayment(
   }
 
   try {
-    const { data, error } = await supabase
+    const { data, error } = await steamDb
       .from("payments")
       .select("id, customer_id, amount, payment_method, payment_status, service_type, service_id, transaction_reference, notes, created_at")
       .eq("customer_id", customerId)
@@ -127,8 +128,8 @@ export async function fetchCustomerPendingSteamPayment(
       created_at: string;
     };
 
-    const matchedItem = STEAM_CATALOG.find(i => i.id === row.service_id) ||
-      (row.amount >= 1000 ? STEAM_CATALOG[1] : STEAM_CATALOG[0]);
+    const catalog = await fetchSteamCatalog();
+    const matchedItem = catalog.find(i => i.id === row.service_id);
 
     const pendingPayment: CustomerPendingSteamPayment = {
       id: row.id,
@@ -139,8 +140,8 @@ export async function fetchCustomerPendingSteamPayment(
       serviceType: "STEAM",
       serviceId: row.service_id ?? null,
       transactionReference: row.transaction_reference ?? null,
-      productName: matchedItem.name,
-      visits: matchedItem.visits,
+      productName: matchedItem?.name ?? "Steam service",
+      visits: matchedItem?.visits ?? 0,
       createdAt: row.created_at,
       notes: row.notes ?? null,
     };
@@ -166,22 +167,24 @@ export async function fetchCustomerPendingSteamPayment(
 export async function submitSteamPaymentProof(
   params: SubmitSteamPaymentProofParams
 ): Promise<SubmitSteamPaymentProofResult> {
-  const { customerId, serviceId, productType, amount, paymentMethod, file } = params;
+  const { customerId, serviceId, productType, paymentMethod, file } = params;
 
   // 1. Validate customer ID
   if (!customerId || !UUID_REGEX.test(customerId)) {
     return { success: false, error: "Invalid customer ID. Steam purchase rejected." };
   }
 
-  // 2. Validate product item against catalog
-  const catalogItem = STEAM_CATALOG.find(i => i.id === serviceId && i.type === productType);
-  if (!catalogItem) {
-    return { success: false, error: "Invalid Steam product selected. Purchase rejected." };
+  // The catalog is checked here for a clear user error; the RPC rechecks it
+  // and derives the charged amount from the database.
+  let catalog: SteamCatalogItem[];
+  try {
+    catalog = await fetchSteamCatalog();
+  } catch (error) {
+    return { success: false, error: error instanceof Error ? error.message : "Unable to verify the current Steam service price." };
   }
-
-  // Verify amount matches catalog
-  if (amount !== catalogItem.price) {
-    return { success: false, error: "Product price mismatch. Purchase rejected." };
+  const catalogItem = catalog.find(i => i.id === serviceId && i.type === productType);
+  if (!catalogItem) {
+    return { success: false, error: "This Steam service is no longer available. Refresh and select an active service." };
   }
 
   // 3. Validate payment method
@@ -212,7 +215,7 @@ export async function submitSteamPaymentProof(
   const storagePath = `proofs/${customerId}/${timestamp}_${randomHex}.${ext}`;
 
   try {
-    const { error: uploadError } = await supabase.storage
+    const { error: uploadError } = await steamDb.storage
       .from("payment-proofs")
       .upload(storagePath, file, {
         contentType: file.type,
@@ -227,49 +230,36 @@ export async function submitSteamPaymentProof(
       };
     }
 
-    // 7. Record PENDING payment in public.payments
+    // 7. Record a PENDING payment through the server-side validation function.
     const dbPaymentMethod = paymentMethod === "cbe_birr" ? "CBE_BIRR" : "TELEBIRR";
-    const notes = `Steam purchase request for ${catalogItem.name} (${catalogItem.visits} session(s) - ${catalogItem.price} ETB). Proof uploaded, awaiting reception verification.`;
-
-    const { data: paymentRow, error: paymentError } = await (supabase
-      .from("payments") as any)
-      .insert({
-        customer_id: customerId,
-        membership_id: null,
-        amount: catalogItem.price,
-        payment_method: dbPaymentMethod,
-        payment_status: "PENDING",
-        transaction_reference: storagePath,
-        paid_at: null, // NOT paid yet — waiting for staff verification
-        service_type: "STEAM",
-        service_id: catalogItem.id,
-        notes,
-      })
-      .select("id")
-      .single();
+    const { data: paymentId, error: paymentError } = await steamDb.rpc("request_steam_payment", {
+      p_customer_id: customerId,
+      p_service_id: catalogItem.id,
+      p_payment_method: dbPaymentMethod,
+      p_proof_path: storagePath,
+      p_idempotency_key: crypto.randomUUID(),
+    });
 
     if (paymentError) {
       console.error("[SteamPurchaseService] DB payment insert failed, rolling back storage:", paymentError);
       // Clean up orphaned uploaded file on database failure
-      await supabase.storage.from("payment-proofs").remove([storagePath]);
+      await steamDb.storage.from("payment-proofs").remove([storagePath]);
       return {
         success: false,
         error: `Failed to create payment verification request: ${paymentError.message}. Please try again.`,
       };
     }
 
-    const insertedId = paymentRow ? (paymentRow as { id: string }).id : undefined;
-
     return {
       success: true,
-      paymentId: insertedId,
+      paymentId: paymentId ?? undefined,
       filePath: storagePath,
     };
   } catch (err: any) {
     console.error("[SteamPurchaseService] Unexpected error during submission, rolling back:", err);
     // Cleanup if storage upload happened
     try {
-      await supabase.storage.from("payment-proofs").remove([storagePath]);
+      await steamDb.storage.from("payment-proofs").remove([storagePath]);
     } catch {
       // ignore rollback errors
     }
