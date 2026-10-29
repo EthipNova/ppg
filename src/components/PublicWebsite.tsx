@@ -31,19 +31,13 @@ export default function PublicWebsite({ onJoin }: { onJoin: (member: Member) => 
     ? studentPlans
     : state.plans.filter(p => p.active && planAppliesToCategory(p, joinCategory));
 
-<<<<<<< HEAD
   const handleCategorySelect = (category: CustomerCategory) => {
     setSelectedCategory(category);
-    setJoinCategory(category);
-    const next = state.plans.find(p => p.active && planAppliesToCategory(p, category));
-    if (next) setSelectedPlan(next.id);
+    void selectCategory(category);
   };
 
-  const selectCategory = (category: CustomerCategory) => {
-=======
   const selectCategory = async (category: CustomerCategory) => {
     const requestId = ++planRequestId.current;
->>>>>>> origin/kb
     setJoinCategory(category);
     setJoinErrors({});
     if (category === "STUDENT") {

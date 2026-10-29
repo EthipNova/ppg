@@ -103,12 +103,10 @@ export default function MemberPortal() {
   const [aerobicsState, setAerobicsState] = useState<AerobicsDashboardState>({ status: "loading" });
   // Async state for Regular live Supabase integration
   const [regularState, setRegularState] = useState<RegularDashboardState>({ status: "loading" });
-<<<<<<< HEAD
   // Async state for Muslim live Supabase integration
   const [muslimState, setMuslimState] = useState<RegularDashboardState>({ status: "loading" });
-=======
+  // Async state for Student live Supabase integration
   const [studentState, setStudentState] = useState<StudentDashboardState>({ status: "loading" });
->>>>>>> origin/kb
   const [fetchTrigger, setFetchTrigger] = useState(0);
 
   useEffect(() => {
@@ -329,7 +327,6 @@ export default function MemberPortal() {
         </div>
       );
     }
-<<<<<<< HEAD
   } else if (isMuslimUser) {
     if (muslimState.status === "loading") {
       return (
@@ -370,14 +367,11 @@ export default function MemberPortal() {
         </div>
       );
     }
-  } else if (!fallbackMember && !state.currentUser) {
-=======
   } else if (isStudentUser) {
     if (studentState.status === "loading") return <PortalState title="Loading Student Dashboard..." message="Retrieving your membership and attendance from Supabase." />;
     if (studentState.status === "error") return <PortalState title="Unable to Load Student Dashboard" message={studentState.error} retry={() => setFetchTrigger(value => value + 1)} />;
     if (studentState.status === "not_found") return <PortalState title={t("member.noProfile")} message={studentState.message} />;
-  } else if (!fallbackMember) {
->>>>>>> origin/kb
+  } else if (!fallbackMember && !state.currentUser) {
     return (
       <div className="min-h-[100dvh] bg-zinc-950 text-white flex items-center justify-center p-4">
         <div className="text-center">
@@ -641,15 +635,10 @@ export default function MemberPortal() {
   }
 
   const CategoryIcon = CATEGORY_ICONS[category];
-<<<<<<< HEAD
-  const rules = state.accessRules.filter(r => r.category === category && r.active);
-  const payments = (isRegularUser && regularState.status === "success")
-=======
   const rules = isStudentUser && studentState.status === "success"
     ? studentState.data.accessRules.map(rule => ({ id: rule.id, category: "STUDENT" as CustomerCategory, days: rule.days, startTime: rule.startTime, endTime: rule.endTime, description: rule.description, active: true }))
     : state.accessRules.filter(r => r.category === category && r.active);
-  const payments = isRegularUser && regularState.status === "success"
->>>>>>> origin/kb
+  const payments = (isRegularUser && regularState.status === "success")
     ? regularState.data.payments.map(p => ({
         id: p.id,
         memberId: member.id,
@@ -748,17 +737,21 @@ export default function MemberPortal() {
                         {regularState.data.customer.status.toUpperCase()}
                       </span>
                     )}
-<<<<<<< HEAD
                     {isMuslimUser && muslimState.status === "success" && (
                       <span className="px-2.5 py-0.5 rounded-full text-xs font-bold uppercase tracking-wider bg-zinc-800 text-lime-400 border border-lime-400/20">
                         {muslimState.data.customer.status.toUpperCase()}
                       </span>
                     )}
-                    <span className={`px-3 py-1 rounded-full text-xs font-bold ${countdownState === "active" ? "bg-lime-400/20 text-lime-400" : countdownState === "expiring" ? "bg-yellow-400/20 text-yellow-400" : "bg-red-400/20 text-red-400"}`}>{t(`countdown.${countdownState}`)}</span>
-=======
-                    {isStudentUser && studentState.status === "success" && <span className={`px-2.5 py-0.5 rounded-full text-xs font-bold uppercase tracking-wider ${studentState.data.customer.verificationStatus === "VERIFIED" && studentState.data.membership?.status === "ACTIVE" ? "bg-lime-400/20 text-lime-400" : studentState.data.customer.verificationStatus === "REJECTED" ? "bg-red-400/20 text-red-400" : "bg-yellow-400/20 text-yellow-400"}`}>{studentState.data.customer.verificationStatus !== "VERIFIED" ? studentState.data.customer.verificationStatus : studentState.data.membership?.status || "NO MEMBERSHIP"}</span>}
-                    {!(isStudentUser && studentState.status === "success" && !studentState.data.membership) && <span className={`px-3 py-1 rounded-full text-xs font-bold ${countdownState === "active" ? "bg-lime-400/20 text-lime-400" : countdownState === "expiring" ? "bg-yellow-400/20 text-yellow-400" : "bg-red-400/20 text-red-400"}`}>{t(`countdown.${countdownState}`)}</span>}
->>>>>>> origin/kb
+                    {isStudentUser && studentState.status === "success" && (
+                      <span className={`px-2.5 py-0.5 rounded-full text-xs font-bold uppercase tracking-wider ${studentState.data.customer.verificationStatus === "VERIFIED" && studentState.data.membership?.status === "ACTIVE" ? "bg-lime-400/20 text-lime-400" : studentState.data.customer.verificationStatus === "REJECTED" ? "bg-red-400/20 text-red-400" : "bg-yellow-400/20 text-yellow-400"}`}>
+                        {studentState.data.customer.verificationStatus !== "VERIFIED" ? studentState.data.customer.verificationStatus : studentState.data.membership?.status || "NO MEMBERSHIP"}
+                      </span>
+                    )}
+                    {!(isStudentUser && studentState.status === "success" && !studentState.data.membership) && (
+                      <span className={`px-3 py-1 rounded-full text-xs font-bold ${countdownState === "active" ? "bg-lime-400/20 text-lime-400" : countdownState === "expiring" ? "bg-yellow-400/20 text-yellow-400" : "bg-red-400/20 text-red-400"}`}>
+                        {t(`countdown.${countdownState}`)}
+                      </span>
+                    )}
                     <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-semibold bg-zinc-800 text-zinc-300">
                       <CategoryIcon weight="fill" className="w-3.5 h-3.5 text-lime-400" />{categoryLabelOf(state, category)}
                     </span>
@@ -770,21 +763,12 @@ export default function MemberPortal() {
                   </div>
                   <p className="text-zinc-500 text-sm">{member.memberId} · {t("member.memberSince", { date: formatDateDisplay(member.joinDate) })}</p>
                   <div className="flex flex-wrap gap-x-6 gap-y-1 mt-3 text-sm">
-<<<<<<< HEAD
-                    <span className="text-zinc-400">{t("countdown.plan")}: <span className="text-white font-semibold">{plan?.name || (isMuslimUser ? "No active plan" : "No Plan")}</span></span>
-                    {plan?.price != null && (
-                      <span className="text-zinc-400">Price: <span className="text-lime-400 font-semibold">{plan.price} ETB</span></span>
-                    )}
-                    {plan && member.joinDate && member.joinDate !== "—" && (
-                      <span className="text-zinc-400">Start: <span className="text-white font-semibold">{formatDateDisplay(member.joinDate)}</span></span>
-=======
-                    <span className="text-zinc-400">{isStudentUser && studentState.status === "success" && !studentState.data.membership ? "Selected plan" : t("countdown.plan")}: <span className="text-white font-semibold">{plan?.name || "No Plan"}</span></span>
+                    <span className="text-zinc-400">{isStudentUser && studentState.status === "success" && !studentState.data.membership ? "Selected plan" : t("countdown.plan")}: <span className="text-white font-semibold">{plan?.name || (isMuslimUser ? "No active plan" : "No Plan")}</span></span>
                     {plan?.price != null && (
                       <span className="text-zinc-400">Price: <span className="text-lime-400 font-semibold">{plan.price} ETB</span></span>
                     )}
                     {member.joinDate && member.joinDate !== "—" && (
                       <span className="text-zinc-400">{isStudentUser && studentState.status === "success" && !studentState.data.membership ? "Member since:" : "Start:"} <span className="text-white font-semibold">{formatDateDisplay(member.joinDate)}</span></span>
->>>>>>> origin/kb
                     )}
                     {plan && member.expiryDate && member.expiryDate !== "—" && (
                       <span className="text-zinc-400">End: <span className="text-white font-semibold">{formatDateDisplay(member.expiryDate)}</span></span>
@@ -828,13 +812,9 @@ export default function MemberPortal() {
                 },
                 {
                   label: t("member.totalVisits"),
-<<<<<<< HEAD
-                  value: (isRegularUser && regularState.status === "success")
-=======
                   value: isStudentUser && studentState.status === "success"
                     ? String(studentState.data.attendance.total)
-                    : isRegularUser && regularState.status === "success"
->>>>>>> origin/kb
+                    : (isRegularUser && regularState.status === "success")
                     ? String(regularState.data.attendance.total)
                     : (isMuslimUser && muslimState.status === "success")
                     ? String(muslimState.data.attendance.total)
@@ -849,13 +829,16 @@ export default function MemberPortal() {
                   icon: CreditCard,
                 },
                 {
-<<<<<<< HEAD
-                  label: isRegularUser || isMuslimUser ? "Balance Due" : t("member.balanceDue"),
-                  value: isMuslimUser ? "Not available" : isRegularUser ? "—" : formatETB(member.balanceDue),
-=======
-                  label: "Balance Due",
-                  value: isStudentUser && studentState.status === "success" && studentState.data.balanceDue === null ? "—" : isRegularUser && regularState.status === "success" ? "—" : formatETB(isStudentUser && studentState.status === "success" ? studentState.data.balanceDue ?? 0 : member.balanceDue),
->>>>>>> origin/kb
+                  label: isRegularUser || isMuslimUser || isStudentUser ? "Balance Due" : t("member.balanceDue"),
+                  value: isMuslimUser
+                    ? "Not available"
+                    : isStudentUser && studentState.status === "success"
+                    ? studentState.data.balanceDue === null
+                      ? "—"
+                      : formatETB(studentState.data.balanceDue ?? 0)
+                    : isRegularUser && regularState.status === "success"
+                    ? "—"
+                    : formatETB(member.balanceDue),
                   icon: Lightning,
                 },
               ].map((s, i) => (
