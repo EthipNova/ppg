@@ -1,180 +1,1204 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
-import { approveSteamPayment, cancelSteamEntitlement, fetchPendingSteamPayments, fetchSteamEntitlements, fetchSteamServiceOfferings, purchaseSteamWithCash, recordSteamCheckin, rejectSteamPayment, saveSteamOffering, searchSteamCustomers, type PendingSteamPayment, type SteamCustomerOption, type SteamEntitlementRow, type SteamServiceOffering } from "../services/steamOperations";
+import {
+  Drop,
+  CheckCircle,
+  ClockCounterClockwise,
+  ArrowClockwise,
+  MagnifyingGlass,
+  Plus,
+  User,
+  ShieldCheck,
+  Eye,
+  Camera,
+  X,
+  Sparkle,
+  Coins,
+  Receipt,
+  FloppyDisk,
+  Lock,
+  PencilSimple,
+  Trash,
+  WarningCircle,
+} from "@phosphor-icons/react";
+import { formatETB, useGym } from "../context/GymContext";
+import {
+  searchCustomersForSteam,
+  fetchActiveSteamService,
+  fetchSteamSummaryStats,
+  fetchSteamServicesList,
+  registerSteamService,
+  authorizeSteamAccess,
+  completeSteamService,
+  getSteamProofSignedUrl,
+  saveSteamServiceConfig,
+  deleteSteamServiceConfig,
+  type SteamCustomerOption,
+  type SteamServiceOffering,
+  type SteamServiceRecord,
+  type SteamSummaryStats,
+} from "../services/steamOperations";
 
-const inputClass = "w-full rounded-xl border border-zinc-700 bg-zinc-800 px-3 py-2.5 text-sm text-white focus:border-lime-400/60 focus:outline-none";
-const blankOffering: SteamServiceOffering = { id: "", name: "", description: "", price: 0, active: true, accessType: "package", durationDays: 30, usageLimit: 10, trackUsage: true };
+const inputClass =
+  "w-full rounded-xl border border-zinc-700 bg-zinc-800 px-3.5 py-2.5 text-sm text-white placeholder:text-zinc-500 focus:border-cyan-400 focus:outline-none transition-colors";
 
-export default function SteamManagement({ canManageServices }: { canManageServices: boolean }) {
-  const [offerings, setOfferings] = useState<SteamServiceOffering[]>([]);
-  const [entitlements, setEntitlements] = useState<SteamEntitlementRow[]>([]);
-  const [pendingPayments, setPendingPayments] = useState<PendingSteamPayment[]>([]);
+type TabKey = "pricing" | "new" | "history";
+
+export default function SteamManagement({
+  isAdmin,
+}: {
+  canManageServices?: boolean;
+  isAdmin?: boolean;
+}) {
+  const { state } = useGym();
+  const roleStr = (state.currentUser?.role || "").toLowerCase();
+  const isUserAdmin = isAdmin ?? (roleStr === "owner" || roleStr === "admin");
+  const [activeTab, setActiveTab] = useState<TabKey>(isUserAdmin ? "pricing" : "new");
+  const [stats, setStats] = useState<SteamSummaryStats>({
+    today_services: 0,
+    pending_payments: 0,
+    approved_payments: 0,
+    in_progress_services: 0,
+    completed_services: 0,
+    today_revenue: 0,
+  });
+  const [records, setRecords] = useState<SteamServiceRecord[]>([]);
+  const [activeOffering, setActiveOffering] = useState<SteamServiceOffering | null>(null);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [saving, setSaving] = useState(false);
-  const [form, setForm] = useState<SteamServiceOffering>(blankOffering);
-  const [search, setSearch] = useState("");
-  const [customers, setCustomers] = useState<SteamCustomerOption[]>([]);
-  const [customerId, setCustomerId] = useState("");
-  const [serviceId, setServiceId] = useState("");
-  const [status, setStatus] = useState("ALL");
-  const [methodFilter, setMethodFilter] = useState("ALL");
-  const [fromDate, setFromDate] = useState("");
-  const [toDate, setToDate] = useState("");
-  const [historySearch, setHistorySearch] = useState("");
-  const purchaseRequestKey = useRef<string | null>(null);
 
-  const refresh = useCallback(async () => {
-    setLoading(true);
-    setError(null);
+  // Steam Service Configuration State for Admin (Single Service Architecture)
+  const [isConfiguringPrice, setIsConfiguringPrice] = useState<boolean>(false);
+  const [configPriceInput, setConfigPriceInput] = useState<string>("");
+  const [isSavingConfig, setIsSavingConfig] = useState<boolean>(false);
+  const [isDeletingConfig, setIsDeletingConfig] = useState<boolean>(false);
+  const [showDeleteModal, setShowDeleteModal] = useState<boolean>(false);
+
+  // Form State for Reception "New Steam Service"
+  const [customerSearch, setCustomerSearch] = useState("");
+  const [customerOptions, setCustomerOptions] = useState<SteamCustomerOption[]>([]);
+  const [selectedCustomer, setSelectedCustomer] = useState<SteamCustomerOption | null>(null);
+  const [isSearchingCustomers, setIsSearchingCustomers] = useState(false);
+  const [paymentMethod, setPaymentMethod] = useState<string>("TELEBIRR");
+  const [paymentReference, setPaymentReference] = useState("");
+  const [proofFile, setProofFile] = useState<File | null>(null);
+  const [proofPreviewUrl, setProofPreviewUrl] = useState<string | null>(null);
+  const [authorizeImmediately, setAuthorizeImmediately] = useState<boolean>(true);
+
+  // History Filter State (Payment Method Filter)
+  const [historySearch, setHistorySearch] = useState("");
+  const [paymentMethodFilter, setPaymentMethodFilter] = useState("ALL");
+  const [dateFilter, setDateFilter] = useState("");
+
+  // Modal State for Image Proof Viewing
+  const [viewingProofUrl, setViewingProofUrl] = useState<string | null>(null);
+  const [viewingProofTitle, setViewingProofTitle] = useState<string>("");
+  const [loadingProof, setLoadingProof] = useState<boolean>(false);
+
+  // Load summary stats, active offering, and records
+  const loadData = useCallback(async () => {
     try {
-      const [nextOfferings, nextEntitlements, nextPending] = await Promise.all([fetchSteamServiceOfferings(), fetchSteamEntitlements(), fetchPendingSteamPayments()]);
-      setOfferings(nextOfferings);
-      setEntitlements(nextEntitlements);
-      setPendingPayments(nextPending);
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Unable to load Steam management data.");
+      const [nextStats, currentOffering, list] = await Promise.all([
+        fetchSteamSummaryStats(),
+        fetchActiveSteamService(),
+        fetchSteamServicesList("ALL"),
+      ]);
+      setStats(nextStats);
+      setActiveOffering(currentOffering);
+      setRecords(list);
+
+      if (currentOffering) {
+        setConfigPriceInput(String(currentOffering.price));
+      } else {
+        setConfigPriceInput("");
+      }
+    } catch (err) {
+      console.error("SteamManagement loadData error:", err);
+      setError(err instanceof Error ? err.message : "Unable to load Steam service data.");
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   }, []);
 
-  useEffect(() => { void refresh(); }, [refresh]);
   useEffect(() => {
-    let active = true;
-    if (search.trim().length < 2) { setCustomers([]); return; }
-    const timer = window.setTimeout(() => {
-      void searchSteamCustomers(search).then(result => { if (active) setCustomers(result); })
-        .catch(cause => { if (active) toast.error(cause instanceof Error ? cause.message : "Customer search failed."); });
-    }, 250);
-    return () => { active = false; window.clearTimeout(timer); };
-  }, [search]);
+    void loadData();
+  }, [loadData]);
 
-  const selectedCustomer = customers.find(customer => customer.id === customerId);
-  const activeOfferings = offerings.filter(offering => offering.active);
-  const selectedOffering = activeOfferings.find(offering => offering.id === serviceId);
-  const selectedCustomerAccess = entitlements.filter(row => row.customerId === customerId);
-  const visibleEntitlements = useMemo(() => entitlements.filter(row => {
-    const date = row.purchaseDate.slice(0, 10);
-    const query = historySearch.trim().toLowerCase();
-    return (status === "ALL" || row.status.toUpperCase() === status)
-      && (methodFilter === "ALL" || row.paymentMethod === methodFilter)
-      && (!fromDate || date >= fromDate)
-      && (!toDate || date <= toDate)
-      && (!query || `${row.customerName} ${row.serviceName}`.toLowerCase().includes(query));
-  }), [entitlements, status, methodFilter, fromDate, toDate, historySearch]);
-  const revenue = entitlements.reduce((total, row) => total + (row.paymentStatus === "PAID" ? row.price : 0), 0);
-
-  const runAction = async (action: () => Promise<void>, success: string) => {
-    setSaving(true);
-    try { await action(); toast.success(success); await refresh(); }
-    catch (cause) { toast.error(cause instanceof Error ? cause.message : "Steam operation failed."); }
-    finally { setSaving(false); }
-  };
-
-  const saveOffering = () => {
-    if (!form.name.trim() || form.price <= 0 || form.durationDays < 1 || (form.usageLimit !== null && form.usageLimit < 1) || (form.usageLimit !== null && !form.trackUsage)) {
-      toast.error("Enter a name, positive price and validity. A use limit requires usage tracking.");
+  // Debounced Customer Search
+  useEffect(() => {
+    const q = customerSearch.trim();
+    if (q.length < 2) {
+      setCustomerOptions([]);
       return;
     }
-    void runAction(() => saveSteamOffering(form), "Steam service saved.").then(() => setForm(blankOffering));
+    setIsSearchingCustomers(true);
+    const timer = setTimeout(async () => {
+      try {
+        const results = await searchCustomersForSteam(q);
+        setCustomerOptions(results);
+      } catch (err) {
+        console.error("Customer search failed:", err);
+      } finally {
+        setIsSearchingCustomers(false);
+      }
+    }, 250);
+
+    return () => clearTimeout(timer);
+  }, [customerSearch]);
+
+  const handleRefresh = async () => {
+    setRefreshing(true);
+    await loadData();
+    toast.success("Steam records refreshed.");
   };
 
-  const doPurchase = () => {
-    if (!selectedCustomer || !selectedOffering) return;
-    if (!window.confirm(`Record a cash payment of ${selectedOffering.price.toLocaleString()} ETB for ${selectedCustomer.name}?`)) return;
-    purchaseRequestKey.current ??= crypto.randomUUID();
-    const requestKey = purchaseRequestKey.current;
-    void runAction(async () => {
-      await purchaseSteamWithCash(selectedCustomer.id, selectedOffering.id, requestKey);
-      purchaseRequestKey.current = null;
-    }, "Cash payment recorded and access activated.");
+  // Proof File Change Handler
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (!["image/jpeg", "image/png", "image/webp"].includes(file.type)) {
+      toast.error("Please upload a valid JPEG, PNG, or WEBP image.");
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      toast.error("Image size exceeds 5MB limit.");
+      return;
+    }
+
+    setProofFile(file);
+    const objectUrl = URL.createObjectURL(file);
+    setProofPreviewUrl(objectUrl);
   };
 
-  const doCheckin = (access: SteamEntitlementRow) => {
-    if (!window.confirm(`Record one Steam use for ${access.customerName}?`)) return;
-    void runAction(() => recordSteamCheckin(access.id), "Steam use recorded.");
+  // Save Steam Configuration Handler (Admin Only - Add or Edit single price)
+  const handleSaveSteamConfig = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const priceNum = Number(configPriceInput);
+    if (isNaN(priceNum) || priceNum <= 0) {
+      toast.error("Please enter a valid positive price amount greater than 0.");
+      return;
+    }
+    setIsSavingConfig(true);
+    try {
+      await saveSteamServiceConfig(priceNum);
+      toast.success(
+        activeOffering
+          ? `Steam service price successfully updated to ${formatETB(priceNum)}.`
+          : `Steam service successfully configured at ${formatETB(priceNum)}.`
+      );
+      setIsConfiguringPrice(false);
+      await loadData();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to save Steam service configuration.");
+    } finally {
+      setIsSavingConfig(false);
+    }
   };
 
-  const doCancel = (access: SteamEntitlementRow) => {
-    const reason = window.prompt("Reason for cancelling this Steam access:");
-    if (!reason?.trim()) return;
-    void runAction(() => cancelSteamEntitlement(access.id, reason), "Steam access cancelled.");
+  // Delete Steam Configuration Handler (Admin Only - Deactivates service)
+  const handleDeleteSteamConfig = async () => {
+    setIsDeletingConfig(true);
+    try {
+      await deleteSteamServiceConfig();
+      toast.success("Steam service configuration deleted. New registrations are now disabled.");
+      setShowDeleteModal(false);
+      setIsConfiguringPrice(false);
+      await loadData();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to delete Steam configuration.");
+    } finally {
+      setIsDeletingConfig(false);
+    }
   };
 
-  const doApprove = (payment: PendingSteamPayment) => {
-    if (!window.confirm(`Confirm receipt of ${payment.amount.toLocaleString()} ETB from ${payment.customerName}? This activates Steam access.`)) return;
-    void runAction(() => approveSteamPayment(payment.id), "Payment verified and Steam access activated.");
+  // Submit Registration Form (Reception Only)
+  const handleSubmitRegistration = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!activeOffering) {
+      toast.error("No Steam service is currently configured. Please contact the Admin.");
+      return;
+    }
+    if (!selectedCustomer) {
+      toast.error("Please search and select a registered customer.");
+      return;
+    }
+    if (paymentMethod !== "CASH" && !proofFile) {
+      toast.error("Please upload the customer's payment proof photo or screenshot.");
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      await registerSteamService({
+        customerId: selectedCustomer.id,
+        serviceId: activeOffering.id,
+        amount: activeOffering.price,
+        paymentMethod,
+        paymentReference: paymentReference.trim() || undefined,
+        proofFile: paymentMethod === "CASH" ? null : proofFile,
+        authorizeImmediately,
+      });
+
+      toast.success(
+        authorizeImmediately
+          ? `Steam service registered for ${selectedCustomer.name}! Access immediately authorized.`
+          : `Steam service registered for ${selectedCustomer.name}! Ready for access.`
+      );
+
+      // Reset form
+      setSelectedCustomer(null);
+      setCustomerSearch("");
+      setCustomerOptions([]);
+      setPaymentReference("");
+      setProofFile(null);
+      if (proofPreviewUrl) URL.revokeObjectURL(proofPreviewUrl);
+      setProofPreviewUrl(null);
+
+      // Switch to History tab so the newly registered transaction is visible
+      setActiveTab("history");
+      await loadData();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to register Steam Service.");
+    } finally {
+      setSubmitting(false);
+    }
   };
 
-  const doReject = (payment: PendingSteamPayment) => {
-    const reason = window.prompt("Reason for rejecting this proof of payment:");
-    if (!reason?.trim()) return;
-    void runAction(() => rejectSteamPayment(payment.id, reason), "Payment marked failed; no Steam access was created.");
+  // Open Proof Image Modal with authenticated signed URL
+  const handleViewProof = async (record: SteamServiceRecord) => {
+    setViewingProofTitle(`${record.customer_name} — ${record.service_name} (${formatETB(record.amount)})`);
+    setLoadingProof(true);
+    try {
+      const signedUrl = await getSteamProofSignedUrl(record.payment_proof_path);
+      setViewingProofUrl(signedUrl);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to load payment proof image.");
+    } finally {
+      setLoadingProof(false);
+    }
   };
+
+  // Reception Authorize Access directly
+  const handleAuthorizeAccess = async (record: SteamServiceRecord) => {
+    if (!window.confirm(`Authorize steam room access for ${record.customer_name}?`)) {
+      return;
+    }
+    try {
+      await authorizeSteamAccess(record.id);
+      toast.success(`Access authorized! Please inform ${record.customer_name} they may enter the steam room.`);
+      await loadData();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Authorization failed.");
+    }
+  };
+
+  // Reception Mark Completed
+  const handleMarkCompleted = async (record: SteamServiceRecord) => {
+    if (!window.confirm(`Mark Steam usage completed for ${record.customer_name}?`)) {
+      return;
+    }
+    try {
+      await completeSteamService(record.id);
+      toast.success(`Steam usage completed for ${record.customer_name}. Record preserved in History.`);
+      await loadData();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to complete service.");
+    }
+  };
+
+  // Filtered History by Payment Method (All Methods, Telebirr, CBE Birr, Cash)
+  const filteredHistory = useMemo(() => {
+    return records.filter(r => {
+      const query = historySearch.trim().toLowerCase();
+      const matchesQuery =
+        !query ||
+        r.customer_name.toLowerCase().includes(query) ||
+        r.customer_code.toLowerCase().includes(query) ||
+        (r.customer_phone && r.customer_phone.includes(query)) ||
+        (r.payment_reference && r.payment_reference.toLowerCase().includes(query)) ||
+        (r.registered_by_email && r.registered_by_email.toLowerCase().includes(query));
+
+      const normalizedMethod = (r.payment_method || "").toUpperCase().trim();
+      let matchesMethod = true;
+      if (paymentMethodFilter === "TELEBIRR") {
+        matchesMethod = normalizedMethod === "TELEBIRR";
+      } else if (paymentMethodFilter === "CBE_BIRR") {
+        matchesMethod = normalizedMethod === "CBE_BIRR" || normalizedMethod === "CBE BIRR";
+      } else if (paymentMethodFilter === "CASH") {
+        matchesMethod = normalizedMethod === "CASH";
+      }
+
+      const dateStr = r.created_at.slice(0, 10);
+      const matchesDate = !dateFilter || dateStr === dateFilter;
+
+      return matchesQuery && matchesMethod && matchesDate;
+    });
+  }, [records, historySearch, paymentMethodFilter, dateFilter]);
 
   return (
     <div className="space-y-6 text-white">
-      <header className="flex flex-wrap items-center justify-between gap-3">
-        <div><p className="text-xs font-bold uppercase tracking-widest text-cyan-300">Additional paid service</p><h2 className="text-2xl font-black">Steam / Sauna</h2></div>
-        <button onClick={() => void refresh()} disabled={loading} className="rounded-xl bg-zinc-800 px-4 py-2 text-sm font-semibold hover:bg-zinc-700 disabled:opacity-50">Refresh</button>
+      {/* Header */}
+      <header className="flex flex-wrap items-center justify-between gap-4">
+        <div>
+          <div className="flex items-center gap-2">
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-cyan-400/10 px-3 py-1 text-xs font-bold uppercase tracking-wider text-cyan-400">
+              <Drop weight="fill" className="h-3.5 w-3.5 text-cyan-400" />
+              In-Person Paid Service
+            </span>
+            {isUserAdmin && (
+              <span className="inline-flex items-center gap-1 rounded-full bg-lime-400/10 px-2.5 py-0.5 text-xs font-bold text-lime-300">
+                <ShieldCheck weight="fill" className="h-3.5 w-3.5" /> Admin Pricing & Audit
+              </span>
+            )}
+          </div>
+          <h2 className="mt-1 text-2xl md:text-3xl font-black tracking-tight">
+            {isUserAdmin ? "Steam / Sauna Pricing & History" : "Steam Service Management"}
+          </h2>
+          <p className="mt-0.5 text-xs text-zinc-400">
+            {isUserAdmin
+              ? "Admin manages official Steam/Sauna pricing and monitors comprehensive service records. Service operations are executed by Reception."
+              : "Reception registers, authorizes access immediately, and manages completion. All records automatically stream to Admin."}
+          </p>
+        </div>
+        <button
+          onClick={handleRefresh}
+          disabled={loading || refreshing}
+          className="flex items-center gap-2 rounded-xl border border-zinc-700 bg-zinc-900 px-4 py-2.5 text-sm font-semibold hover:bg-zinc-800 disabled:opacity-50 transition-colors"
+        >
+          <ArrowClockwise className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`} />
+          <span>Refresh</span>
+        </button>
       </header>
-      {error && <div role="alert" className="rounded-xl border border-red-400/30 bg-red-400/10 p-4 text-sm text-red-200">{error}</div>}
-      {loading && <div className="rounded-2xl border border-zinc-800 bg-zinc-900 p-8 text-center text-zinc-400">Loading Steam services and purchases…</div>}
-      {!loading && !error && offerings.length === 0 && <div className="rounded-xl border border-amber-400/30 bg-amber-400/10 p-4 text-sm text-amber-100">No Steam offerings are configured. An owner can create one after the database migration is applied.</div>}
 
-      <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        {[
-          ["Active access", entitlements.filter(row => row.status === "Active" && row.paymentStatus === "PAID").length],
-          ["Expired / cancelled", entitlements.filter(row => ["Expired", "Cancelled"].includes(row.status)).length],
-          ...(canManageServices ? [["Paid revenue", `${revenue.toLocaleString()} ETB`]] : []),
-        ].map(([label, value]) => <div key={String(label)} className="rounded-2xl border border-zinc-800 bg-zinc-900 p-4"><div className="text-xs uppercase tracking-wide text-zinc-500">{label}</div><div className="mt-2 text-2xl font-black text-lime-300">{value}</div></div>)}
-      </section>
-
-      {canManageServices && <section className="rounded-2xl border border-zinc-800 bg-zinc-900 p-5">
-        <h3 className="mb-4 text-lg font-bold">Service offerings</h3>
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          <input className={inputClass} placeholder="Service name" value={form.name} onChange={event => setForm({ ...form, name: event.target.value })} />
-          <input className={inputClass} placeholder="Price (ETB)" type="number" min="0.01" step="0.01" value={form.price || ""} onChange={event => setForm({ ...form, price: Number(event.target.value) })} />
-          <select className={inputClass} value={form.accessType} onChange={event => setForm({ ...form, accessType: event.target.value as SteamServiceOffering["accessType"] })}><option value="package">Package</option><option value="per-visit">Single visit</option></select>
-          <input className={inputClass} placeholder="Validity (days)" type="number" min="1" value={form.durationDays} onChange={event => setForm({ ...form, durationDays: Number(event.target.value) })} />
-          <input className={inputClass} placeholder="Usage limit (blank = none)" type="number" min="1" value={form.usageLimit ?? ""} onChange={event => setForm({ ...form, usageLimit: event.target.value ? Number(event.target.value) : null })} />
-          <input className={inputClass} placeholder="Description" value={form.description} onChange={event => setForm({ ...form, description: event.target.value })} />
-          <label className="flex items-center gap-2 rounded-xl bg-zinc-800 px-3 py-2 text-sm"><input type="checkbox" checked={form.trackUsage} onChange={event => setForm({ ...form, trackUsage: event.target.checked })} />Track usage</label>
-          <label className="flex items-center gap-2 rounded-xl bg-zinc-800 px-3 py-2 text-sm"><input type="checkbox" checked={form.active} onChange={event => setForm({ ...form, active: event.target.checked })} />Available to purchase</label>
+      {/* Error Notice */}
+      {error && (
+        <div className="rounded-xl border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-200 flex items-center justify-between">
+          <span>{error}</span>
+          <button onClick={loadData} className="font-bold underline ml-3">Retry</button>
         </div>
-        <div className="mt-3 flex flex-wrap gap-2"><button disabled={saving} onClick={saveOffering} className="rounded-xl bg-lime-400 px-4 py-2.5 font-bold text-zinc-950 disabled:opacity-50">{form.id ? "Save offering" : "Create offering"}</button>{form.id && <button onClick={() => setForm(blankOffering)} className="rounded-xl bg-zinc-800 px-4 py-2.5">Cancel edit</button>}</div>
-        <div className="mt-4 divide-y divide-zinc-800">
-          {offerings.map(offering => <div key={offering.id} className="flex flex-wrap items-center justify-between gap-3 py-3">
-            <div><div className="font-semibold">{offering.name} <span className="text-lime-300">{offering.price.toLocaleString()} ETB</span></div><div className="text-xs text-zinc-500">{offering.durationDays} day(s) · {offering.usageLimit ?? "Unlimited"} uses · {offering.active ? "Active" : "Inactive"}</div></div>
-            <button onClick={() => setForm(offering)} className="rounded-lg bg-zinc-800 px-3 py-2 text-sm hover:bg-zinc-700">Edit</button>
-          </div>)}
+      )}
+
+      {/* SUMMARY STATS (Today's Services & Today's Revenue) */}
+      <section className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <div className="rounded-2xl border border-zinc-800 bg-zinc-900/90 p-4 shadow-sm">
+          <div className="text-[11px] font-bold uppercase tracking-wider text-zinc-400">Today's Services</div>
+          <div className="mt-2 text-2xl font-black text-white">{stats.today_services}</div>
+          <div className="mt-1 text-xs text-zinc-500">Registered today</div>
         </div>
-      </section>}
 
-      <section className="rounded-2xl border border-zinc-800 bg-zinc-900 p-5">
-        <h3 className="mb-4 text-lg font-bold">Reception purchase and access check-in</h3>
-        <div className="grid gap-3 md:grid-cols-[1fr_1fr_auto]">
-          <div><input className={inputClass} placeholder="Search customer name, code or phone" value={search} onChange={event => { setSearch(event.target.value); setCustomerId(""); }} /><div className="mt-1 max-h-44 overflow-y-auto">{customers.map(customer => <button key={customer.id} onClick={() => { setCustomerId(customer.id); setSearch(`${customer.name} · ${customer.code}`); }} className={`block w-full rounded-lg px-3 py-2 text-left text-sm hover:bg-zinc-800 ${customer.id === customerId ? "bg-zinc-800" : ""}`}>{customer.name} <span className="text-zinc-500">· {customer.code} · {customer.phone ?? "No phone"}</span></button>)}</div></div>
-          <select className={inputClass} value={serviceId} onChange={event => setServiceId(event.target.value)}><option value="">Select active service</option>{activeOfferings.map(offering => <option key={offering.id} value={offering.id}>{offering.name} · {offering.price.toLocaleString()} ETB</option>)}</select>
-          <button disabled={saving || !customerId || !serviceId} onClick={doPurchase} className="rounded-xl bg-cyan-300 px-4 py-2.5 font-bold text-zinc-950 disabled:opacity-50">Record cash sale</button>
+        <div className="rounded-2xl border border-lime-500/30 bg-lime-500/5 p-4 shadow-sm">
+          <div className="text-[11px] font-bold uppercase tracking-wider text-lime-400">Today's Revenue</div>
+          <div className="mt-2 text-2xl font-black text-lime-300">{formatETB(stats.today_revenue)}</div>
+          <div className="mt-1 text-xs text-zinc-500">Total received</div>
         </div>
-        {customerId && <div className="mt-4 space-y-2">{selectedCustomerAccess.length === 0 ? <p className="text-sm text-zinc-500">No Steam access history for this customer.</p> : selectedCustomerAccess.map(access => <div key={access.id} className="flex flex-wrap items-center justify-between gap-3 rounded-xl bg-zinc-800/60 p-3 text-sm">
-          <div><div className="font-semibold">{access.serviceName} · {access.status}</div><div className="text-xs text-zinc-400">{access.paymentStatus} via {access.paymentMethod} · {access.purchaseDate.slice(0, 10)} · Expires {access.endDate} · {access.usageLimit === null ? "Unlimited uses" : `${Math.max(0, access.usageLimit - access.usageCount)} uses remaining`}</div></div>
-          <div className="flex gap-2"><button disabled={saving || access.status !== "Active" || access.paymentStatus !== "PAID" || (access.usageLimit !== null && access.usageCount >= access.usageLimit)} onClick={() => doCheckin(access)} className="rounded-lg bg-cyan-300 px-3 py-2 font-semibold text-zinc-950 disabled:opacity-40">Check in</button>{canManageServices && access.status === "Active" && <button disabled={saving} onClick={() => doCancel(access)} className="rounded-lg bg-red-500/20 px-3 py-2 text-red-200">Cancel access</button>}</div>
-        </div>)}</div>}
       </section>
 
-      <section className="rounded-2xl border border-zinc-800 bg-zinc-900 p-5">
-        <h3 className="mb-3 text-lg font-bold">Online proof verification</h3>
-        <p className="mb-3 text-xs text-zinc-500">Verify the transfer against the gym&apos;s bank or wallet records before approving. Approval records the completed payment and entitlement in one database transaction.</p>
-        {pendingPayments.length === 0 ? <p className="text-sm text-zinc-500">No Steam payment proofs are awaiting verification.</p> : <div className="space-y-2">{pendingPayments.map(payment => <div key={payment.id} className="flex flex-wrap items-center justify-between gap-3 rounded-xl bg-zinc-800/60 p-3 text-sm"><div><div className="font-semibold">{payment.customerName} · {payment.serviceName}</div><div className="text-xs text-zinc-400">{payment.amount.toLocaleString()} ETB · {payment.paymentMethod} · submitted {payment.createdAt.slice(0, 16).replace("T", " ")}</div></div><div className="flex gap-2"><button disabled={saving} onClick={() => doApprove(payment)} className="rounded-lg bg-emerald-400 px-3 py-2 font-semibold text-zinc-950 disabled:opacity-50">Verify payment</button><button disabled={saving} onClick={() => doReject(payment)} className="rounded-lg bg-red-500/20 px-3 py-2 text-red-200 disabled:opacity-50">Reject proof</button></div></div>)}</div>}
-      </section>
+      {/* NAVIGATION TABS */}
+      <nav className="flex gap-2 border-b border-zinc-800 pb-3">
+        {isUserAdmin ? (
+          <>
+            <button
+              onClick={() => setActiveTab("pricing")}
+              className={`flex items-center gap-2 rounded-xl px-5 py-2.5 text-sm font-bold transition-all ${
+                activeTab === "pricing"
+                  ? "bg-lime-400 text-zinc-950 shadow-md shadow-lime-400/20"
+                  : "bg-zinc-900 text-zinc-300 hover:bg-zinc-800"
+              }`}
+            >
+              <Coins weight="bold" className="h-4 w-4" />
+              <span>Price Configuration</span>
+            </button>
 
-      <section className="rounded-2xl border border-zinc-800 bg-zinc-900 p-5">
-        <div className="mb-4 flex flex-wrap items-center gap-2"><h3 className="mr-auto text-lg font-bold">Purchase and access history</h3><input className={inputClass + " max-w-48"} aria-label="Search customer or service" placeholder="Customer or service" value={historySearch} onChange={event => setHistorySearch(event.target.value)} /><select aria-label="Filter access status" className={inputClass + " max-w-40"} value={status} onChange={event => setStatus(event.target.value)}><option value="ALL">All statuses</option><option value="ACTIVE">Active</option><option value="EXPIRED">Expired</option><option value="CANCELLED">Cancelled</option></select><select aria-label="Filter payment method" className={inputClass + " max-w-40"} value={methodFilter} onChange={event => setMethodFilter(event.target.value)}><option value="ALL">All methods</option><option value="CASH">Cash</option><option value="CBE_BIRR">CBE</option><option value="TELEBIRR">Telebirr</option></select><input aria-label="From date" className={inputClass + " max-w-40"} type="date" value={fromDate} onChange={event => setFromDate(event.target.value)} /><input aria-label="To date" className={inputClass + " max-w-40"} type="date" value={toDate} onChange={event => setToDate(event.target.value)} /></div>
-        <div className="overflow-x-auto"><table className="w-full min-w-[760px] text-left text-sm"><thead className="text-xs uppercase text-zinc-500"><tr><th className="p-2">Customer</th><th className="p-2">Service</th><th className="p-2">Purchase</th><th className="p-2">Payment</th><th className="p-2">Valid through</th><th className="p-2">Uses</th><th className="p-2">Access</th></tr></thead><tbody className="divide-y divide-zinc-800">{visibleEntitlements.map(row => <tr key={row.id}><td className="p-2">{row.customerName}</td><td className="p-2">{row.serviceName}</td><td className="p-2">{row.price.toLocaleString()} {row.currency} · {row.purchaseDate.slice(0, 10)}</td><td className="p-2">{row.paymentStatus} / {row.paymentMethod}</td><td className="p-2">{row.startDate} – {row.endDate}</td><td className="p-2">{row.trackUsage ? `${row.usageCount}/${row.usageLimit ?? "∞"}` : "Not tracked"}</td><td className="p-2">{row.status}</td></tr>)}</tbody></table>{!loading && visibleEntitlements.length === 0 && <p className="p-6 text-center text-sm text-zinc-500">No matching Steam access records.</p>}</div>
-      </section>
+            <button
+              onClick={() => setActiveTab("history")}
+              className={`flex items-center gap-2 rounded-xl px-5 py-2.5 text-sm font-bold transition-all ${
+                activeTab === "history"
+                  ? "bg-zinc-100 text-zinc-950 shadow-md"
+                  : "bg-zinc-900 text-zinc-300 hover:bg-zinc-800"
+              }`}
+            >
+              <ClockCounterClockwise weight="bold" className="h-4 w-4" />
+              <span>Service History</span>
+              <span
+                className={`rounded-full px-2 py-0.5 text-xs font-black ${
+                  activeTab === "history" ? "bg-zinc-950 text-white" : "bg-zinc-800 text-zinc-300"
+                }`}
+              >
+                {records.length}
+              </span>
+            </button>
+          </>
+        ) : (
+          <>
+            <button
+              onClick={() => setActiveTab("new")}
+              className={`flex items-center gap-2 rounded-xl px-5 py-2.5 text-sm font-bold transition-all ${
+                activeTab === "new"
+                  ? "bg-cyan-400 text-zinc-950 shadow-md shadow-cyan-400/20"
+                  : "bg-zinc-900 text-zinc-300 hover:bg-zinc-800"
+              }`}
+            >
+              <Plus weight="bold" className="h-4 w-4" />
+              <span>New Steam Service</span>
+            </button>
+
+            <button
+              onClick={() => setActiveTab("history")}
+              className={`flex items-center gap-2 rounded-xl px-5 py-2.5 text-sm font-bold transition-all ${
+                activeTab === "history"
+                  ? "bg-zinc-100 text-zinc-950 shadow-md"
+                  : "bg-zinc-900 text-zinc-300 hover:bg-zinc-800"
+              }`}
+            >
+              <ClockCounterClockwise weight="bold" className="h-4 w-4" />
+              <span>History</span>
+              <span
+                className={`rounded-full px-2 py-0.5 text-xs font-black ${
+                  activeTab === "history" ? "bg-zinc-950 text-white" : "bg-zinc-800 text-zinc-300"
+                }`}
+              >
+                {records.length}
+              </span>
+            </button>
+          </>
+        )}
+      </nav>
+
+      {/* SECTION: ADMIN PRICE CONFIGURATION (SINGLE STEAM SERVICE ARCHITECTURE) */}
+      {activeTab === "pricing" && isUserAdmin && (
+        <div className="space-y-6">
+          <div className="rounded-2xl border border-zinc-800 bg-zinc-900/90 p-6 space-y-6 shadow-sm">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div>
+                <h3 className="text-lg font-black text-white flex items-center gap-2">
+                  <Coins weight="fill" className="h-5 w-5 text-lime-400" />
+                  Steam & Sauna Service Configuration
+                </h3>
+                <p className="mt-1 text-xs text-zinc-400">
+                  PowerPlus Gym offers a single Steam & Sauna service. Manage the official rate below.
+                </p>
+              </div>
+              {activeOffering && !isConfiguringPrice && (
+                <div className="rounded-xl border border-lime-400/30 bg-lime-400/10 px-4 py-2 text-right">
+                  <span className="text-[11px] font-bold uppercase tracking-wider text-lime-400 block">
+                    Current Configured Rate
+                  </span>
+                  <span className="text-xl font-black text-lime-300">
+                    {formatETB(activeOffering.price)}
+                  </span>
+                </div>
+              )}
+            </div>
+
+            {/* CASE 1: When no Steam service configuration exists */}
+            {!activeOffering && !isConfiguringPrice && (
+              <div className="rounded-2xl border border-dashed border-zinc-700 bg-zinc-950/40 p-8 text-center space-y-4">
+                <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-amber-400/10 text-amber-400">
+                  <WarningCircle weight="duotone" className="h-8 w-8" />
+                </div>
+                <div>
+                  <h4 className="text-base font-bold text-white">No Steam Service Configured</h4>
+                  <p className="mt-1 max-w-md mx-auto text-xs text-zinc-400 leading-relaxed">
+                    There is currently no active Steam/Sauna service configuration. Reception cannot register new customer Steam sessions until the service is configured.
+                  </p>
+                </div>
+                <div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setConfigPriceInput("");
+                      setIsConfiguringPrice(true);
+                    }}
+                    className="inline-flex items-center gap-2 rounded-xl bg-lime-400 px-5 py-2.5 text-sm font-bold text-zinc-950 hover:bg-lime-300 transition-colors shadow-sm"
+                  >
+                    <Plus weight="bold" className="h-4 w-4" />
+                    <span>Add Steam</span>
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* CASE 2: When adding or editing the Steam configuration */}
+            {isConfiguringPrice && (
+              <form onSubmit={handleSaveSteamConfig} className="rounded-xl border border-lime-500/30 bg-zinc-950/70 p-5 space-y-4">
+                <div className="flex items-center justify-between">
+                  <h4 className="text-sm font-bold text-white flex items-center gap-2">
+                    <Sparkle weight="fill" className="h-4 w-4 text-lime-400" />
+                    {activeOffering ? "Edit Steam Service Price" : "Add Steam Service"}
+                  </h4>
+                  <span className="text-xs text-zinc-400">
+                    {activeOffering ? "Update existing standard rate" : "Set initial service price"}
+                  </span>
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold uppercase tracking-wider text-zinc-400 block">
+                    Steam Service Amount (ETB) *
+                  </label>
+                  <input
+                    type="number"
+                    min="1"
+                    step="0.01"
+                    value={configPriceInput}
+                    onChange={e => setConfigPriceInput(e.target.value)}
+                    placeholder="Enter positive price (e.g. 150)..."
+                    className={inputClass}
+                    autoFocus
+                    required
+                  />
+                  <p className="text-[11px] text-zinc-500">
+                    This amount will automatically be retrieved and charged to customers at Reception.
+                  </p>
+                </div>
+
+                <div className="flex items-center justify-end gap-3 pt-2">
+                  <button
+                    type="button"
+                    disabled={isSavingConfig}
+                    onClick={() => {
+                      setIsConfiguringPrice(false);
+                      setConfigPriceInput(activeOffering ? String(activeOffering.price) : "");
+                    }}
+                    className="rounded-xl border border-zinc-700 bg-zinc-800 px-4 py-2 text-xs font-bold text-zinc-300 hover:text-white hover:bg-zinc-700 transition-colors"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={isSavingConfig || !configPriceInput || Number(configPriceInput) <= 0}
+                    className="inline-flex items-center gap-2 rounded-xl bg-lime-400 px-5 py-2 text-xs font-bold text-zinc-950 hover:bg-lime-300 disabled:opacity-50 transition-colors shadow-sm"
+                  >
+                    <FloppyDisk weight="bold" className="h-4 w-4" />
+                    <span>{isSavingConfig ? "Saving…" : "Save Configuration"}</span>
+                  </button>
+                </div>
+              </form>
+            )}
+
+            {/* CASE 3: When Steam configuration already exists */}
+            {activeOffering && !isConfiguringPrice && (
+              <div className="rounded-xl border border-zinc-800 bg-zinc-950/40 p-5 space-y-4">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                  <div className="flex items-start gap-3.5">
+                    <div className="h-11 w-11 rounded-xl bg-cyan-400/10 flex items-center justify-center text-cyan-400 shrink-0">
+                      <Drop weight="duotone" className="h-6 w-6" />
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="font-bold text-white text-base">{activeOffering.name}</span>
+                        <span className="rounded-full bg-lime-400/10 px-2.5 py-0.5 text-[10px] font-bold text-lime-400">
+                          Active Single Service
+                        </span>
+                      </div>
+                      <p className="text-xs text-zinc-400 mt-1">
+                        Official single Steam & Sauna service. Reception automatically applies this price to all customer session passes.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-3">
+                    <div className="text-right sm:pr-4 sm:border-r sm:border-zinc-800">
+                      <div className="text-[10px] uppercase font-bold tracking-wider text-zinc-500">Current Price</div>
+                      <div className="font-mono text-2xl font-black text-lime-400">
+                        {formatETB(activeOffering.price)}
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setConfigPriceInput(String(activeOffering.price));
+                          setIsConfiguringPrice(true);
+                        }}
+                        className="inline-flex items-center gap-1.5 rounded-xl border border-zinc-700 bg-zinc-800 px-3.5 py-2 text-xs font-bold text-zinc-200 hover:text-white hover:bg-zinc-700 transition-colors"
+                      >
+                        <PencilSimple weight="bold" className="h-3.5 w-3.5 text-lime-400" />
+                        <span>Edit</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setShowDeleteModal(true)}
+                        className="inline-flex items-center gap-1.5 rounded-xl border border-red-500/30 bg-red-500/10 px-3.5 py-2 text-xs font-bold text-red-400 hover:bg-red-500/20 hover:text-red-300 transition-colors"
+                      >
+                        <Trash weight="bold" className="h-3.5 w-3.5" />
+                        <span>Delete</span>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* DELETE STEAM SERVICE CONFIRMATION MODAL */}
+      {showDeleteModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
+          <div className="w-full max-w-md rounded-2xl border border-zinc-800 bg-zinc-900 p-6 shadow-2xl space-y-4">
+            <div className="flex items-center gap-3 text-red-400">
+              <div className="h-10 w-10 rounded-xl bg-red-500/10 flex items-center justify-center shrink-0">
+                <Trash weight="bold" className="h-5 w-5" />
+              </div>
+              <h3 className="text-base font-bold text-white">Delete Steam Configuration?</h3>
+            </div>
+
+            <div className="rounded-xl border border-amber-500/20 bg-amber-500/5 p-3.5 text-xs text-amber-300 leading-relaxed space-y-2">
+              <p className="font-semibold flex items-center gap-1.5 text-amber-200">
+                <WarningCircle weight="bold" className="h-4 w-4 shrink-0" />
+                Service Deactivation Notice
+              </p>
+              <p>
+                Deleting this configuration will prevent new Steam registrations at Reception until the service is configured again.
+              </p>
+              <p className="text-[11px] text-zinc-400">
+                All historical Steam transactions, payments, completed services, and customer records will remain completely preserved and intact.
+              </p>
+            </div>
+
+            <div className="flex items-center justify-end gap-3 pt-2">
+              <button
+                type="button"
+                disabled={isDeletingConfig}
+                onClick={() => setShowDeleteModal(false)}
+                className="rounded-xl border border-zinc-700 bg-zinc-800 px-4 py-2 text-xs font-bold text-zinc-300 hover:text-white hover:bg-zinc-700 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={isDeletingConfig}
+                onClick={handleDeleteSteamConfig}
+                className="inline-flex items-center gap-1.5 rounded-xl bg-red-600 px-4 py-2 text-xs font-bold text-white hover:bg-red-500 disabled:opacity-50 transition-colors shadow-sm"
+              >
+                <Trash weight="bold" className="h-4 w-4" />
+                <span>{isDeletingConfig ? "Deleting…" : "Delete Steam Service"}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* SECTION 1: NEW STEAM SERVICE (RECEPTION ONLY) */}
+      {activeTab === "new" && !isUserAdmin && (
+        <div className="grid gap-6 lg:grid-cols-3">
+          <div className="lg:col-span-2 space-y-6">
+            {!activeOffering ? (
+              <div className="rounded-2xl border border-amber-500/30 bg-amber-500/5 p-8 text-center space-y-4">
+                <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-amber-400/10 text-amber-400">
+                  <WarningCircle weight="duotone" className="h-8 w-8" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-white">
+                    No Steam service is currently configured. Please contact the Admin.
+                  </h3>
+                  <p className="mt-1.5 max-w-md mx-auto text-xs text-zinc-400 leading-relaxed">
+                    Customer registrations for Steam & Sauna sessions are temporarily disabled because there is no active service rate set in the system. Once the Admin configures the Steam service rate, registration will automatically become available.
+                  </p>
+                </div>
+                <div className="pt-2">
+                  <button
+                    type="button"
+                    onClick={() => void loadData()}
+                    className="inline-flex items-center gap-2 rounded-xl border border-zinc-700 bg-zinc-800 px-4 py-2 text-xs font-bold text-zinc-300 hover:text-white hover:bg-zinc-700 transition-colors"
+                  >
+                    <ArrowClockwise weight="bold" className="h-3.5 w-3.5" />
+                    <span>Check Again</span>
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <form
+                onSubmit={handleSubmitRegistration}
+                className="rounded-2xl border border-zinc-800 bg-zinc-900/90 p-6 space-y-6 shadow-sm"
+              >
+              <div>
+                <h3 className="text-lg font-black text-white flex items-center gap-2">
+                  <Drop weight="fill" className="h-5 w-5 text-cyan-400" />
+                  New Steam Service
+                </h3>
+                <p className="mt-1 text-xs text-zinc-400">
+                  Select customer, record payment, attach payment photo, and authorize immediate steam access.
+                </p>
+              </div>
+
+              {/* Step 1: Customer Search */}
+              <div className="space-y-3">
+                <label className="text-xs font-bold uppercase tracking-wider text-zinc-400 flex items-center gap-1.5">
+                  <User weight="bold" className="h-4 w-4 text-cyan-400" />
+                  1. Customer Search (Name, Member ID, or Phone) *
+                </label>
+                <div className="relative">
+                  <MagnifyingGlass className="absolute left-3.5 top-3 h-4 w-4 text-zinc-500" />
+                  <input
+                    type="text"
+                    value={customerSearch}
+                    onChange={e => {
+                      setCustomerSearch(e.target.value);
+                      if (selectedCustomer) setSelectedCustomer(null);
+                    }}
+                    placeholder="Search by full name, phone number, or Member ID (e.g. PP-001)"
+                    className={`${inputClass} pl-10`}
+                  />
+                  {isSearchingCustomers && (
+                    <span className="absolute right-3.5 top-3 text-xs text-zinc-500">Searching…</span>
+                  )}
+                </div>
+
+                {/* Search Results Dropdown */}
+                {customerSearch.trim().length >= 2 && !selectedCustomer && (
+                  <div className="rounded-xl border border-zinc-700 bg-zinc-800 max-h-56 overflow-y-auto divide-y divide-zinc-700 shadow-xl">
+                    {customerOptions.map(c => (
+                      <button
+                        key={c.id}
+                        type="button"
+                        onClick={() => {
+                          setSelectedCustomer(c);
+                          setCustomerSearch(`${c.name} (${c.code})`);
+                        }}
+                        className="w-full text-left px-4 py-2.5 text-sm hover:bg-zinc-700/60 transition-colors flex items-center justify-between"
+                      >
+                        <div>
+                          <div className="font-bold text-white">{c.name}</div>
+                          <div className="text-xs text-zinc-400">
+                            Member ID: <span className="font-mono text-cyan-300">{c.code}</span> · {c.phone || "No phone"}
+                          </div>
+                        </div>
+                        <span className="rounded-full bg-zinc-900 px-2 py-0.5 text-[10px] font-bold text-zinc-300">
+                          {c.category}
+                        </span>
+                      </button>
+                    ))}
+                    {!isSearchingCustomers && customerOptions.length === 0 && (
+                      <div className="p-4 text-center text-sm text-zinc-400">
+                        No matching customers found. Customers must be registered members.
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Selected Customer Card */}
+                {selectedCustomer && (
+                  <div className="rounded-xl border border-cyan-500/40 bg-cyan-950/20 p-4 flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <div className="h-10 w-10 rounded-full bg-cyan-400/20 flex items-center justify-center text-cyan-300 font-bold">
+                        {selectedCustomer.name.slice(0, 2).toUpperCase()}
+                      </div>
+                      <div>
+                        <div className="font-bold text-white text-base">{selectedCustomer.name}</div>
+                        <div className="text-xs text-zinc-300 flex flex-wrap gap-x-3 gap-y-1 mt-0.5">
+                          <span>Member ID: <strong className="font-mono text-cyan-300">{selectedCustomer.code}</strong></span>
+                          <span>Phone: {selectedCustomer.phone || "—"}</span>
+                          <span>Category: <strong className="text-white">{selectedCustomer.category}</strong></span>
+                        </div>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedCustomer(null);
+                        setCustomerSearch("");
+                      }}
+                      className="rounded-lg p-1.5 text-zinc-400 hover:bg-zinc-800 hover:text-white"
+                      title="Clear customer selection"
+                    >
+                      <X className="h-5 w-5" />
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              {/* Step 2: Service Offering & Price */}
+              <div className="space-y-3">
+                <label className="text-xs font-bold uppercase tracking-wider text-zinc-400 flex items-center gap-1.5">
+                  <Coins weight="bold" className="h-4 w-4 text-cyan-400" />
+                  2. Steam Service Offering & Configured Price (ETB) *
+                </label>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div className="rounded-xl border border-zinc-700 bg-zinc-800/80 px-3.5 py-2.5 text-sm text-white flex items-center justify-between">
+                    <span className="font-semibold text-zinc-200">{activeOffering?.name || "Steam / Sauna Service"}</span>
+                    <span className="rounded-full bg-cyan-400/10 px-2 py-0.5 text-[10px] font-bold text-cyan-300">
+                      Standard Session
+                    </span>
+                  </div>
+                  <div className="relative">
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="1"
+                      value={activeOffering?.price || ""}
+                      readOnly
+                      placeholder="Amount in ETB"
+                      className={`${inputClass} bg-zinc-800/60 cursor-not-allowed text-lime-400 font-bold font-mono`}
+                      required
+                    />
+                    <div className="absolute right-3 top-2.5 flex items-center gap-1.5 text-xs text-zinc-400">
+                      <Lock className="h-3.5 w-3.5 text-zinc-500" />
+                      <span className="hidden sm:inline">Configured price</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Step 3: Payment Details */}
+              <div className="space-y-3">
+                <label className="text-xs font-bold uppercase tracking-wider text-zinc-400 flex items-center gap-1.5">
+                  <Receipt weight="bold" className="h-4 w-4 text-cyan-400" />
+                  3. Payment Method & Transaction Reference *
+                </label>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <select
+                    value={paymentMethod}
+                    onChange={e => {
+                      const val = e.target.value;
+                      setPaymentMethod(val);
+                      if (val === "CASH") {
+                        setProofFile(null);
+                        if (proofPreviewUrl) URL.revokeObjectURL(proofPreviewUrl);
+                        setProofPreviewUrl(null);
+                      }
+                    }}
+                    className={inputClass}
+                  >
+                    <option value="CASH">Cash</option>
+                    <option value="TELEBIRR">Telebirr</option>
+                    <option value="CBE_BIRR">CBE Birr</option>
+                  </select>
+
+                  <input
+                    type="text"
+                    value={paymentReference}
+                    onChange={e => setPaymentReference(e.target.value)}
+                    placeholder="Transaction Reference / SMS Code (Optional)"
+                    className={inputClass}
+                  />
+                </div>
+              </div>
+
+              {/* Step 4: Payment Photo Upload (Hidden for Cash, required for Telebirr / CBE Birr) */}
+              {paymentMethod !== "CASH" && (
+                <div className="space-y-3">
+                  <label className="text-xs font-bold uppercase tracking-wider text-zinc-400 flex items-center gap-1.5">
+                    <Camera weight="bold" className="h-4 w-4 text-cyan-400" />
+                    4. Payment Photo or Receipt Screenshot *
+                  </label>
+                  <p className="text-xs text-zinc-400">
+                    Upload customer transfer confirmation for {paymentMethod === "TELEBIRR" ? "Telebirr" : "CBE Birr"}. Saved securely to private Supabase Storage.
+                  </p>
+
+                  <div className="flex flex-col sm:flex-row items-center gap-4">
+                    <label className="flex w-full sm:w-auto cursor-pointer items-center justify-center gap-2 rounded-xl border border-dashed border-zinc-600 bg-zinc-800/80 px-5 py-3 text-sm font-semibold text-zinc-200 hover:border-cyan-400 hover:bg-zinc-800 transition-colors">
+                      <Camera className="h-5 w-5 text-cyan-400" />
+                      <span>{proofFile ? "Change / Retake Photo" : "Take Photo or Upload Image"}</span>
+                      <input
+                        type="file"
+                        accept="image/*"
+                        capture="environment"
+                        onChange={handleFileChange}
+                        className="hidden"
+                      />
+                    </label>
+
+                    {proofFile && (
+                      <span className="text-xs text-zinc-300">
+                        Selected: <strong>{proofFile.name}</strong> ({(proofFile.size / 1024).toFixed(0)} KB)
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Image Preview */}
+                  {proofPreviewUrl && (
+                    <div className="relative mt-2 max-w-xs overflow-hidden rounded-xl border border-zinc-700 bg-black">
+                      <img
+                        src={proofPreviewUrl}
+                        alt="Payment proof preview"
+                        className="max-h-52 w-full object-contain"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setProofFile(null);
+                          if (proofPreviewUrl) URL.revokeObjectURL(proofPreviewUrl);
+                          setProofPreviewUrl(null);
+                        }}
+                        className="absolute right-2 top-2 rounded-full bg-zinc-900/80 p-1 text-white hover:bg-red-600 transition-colors"
+                        title="Remove image"
+                      >
+                        <X className="h-4 w-4" />
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Step 5: Immediate Authorization Option */}
+              <div className="rounded-xl border border-zinc-800 bg-zinc-800/40 p-4">
+                <label className="flex items-center gap-3 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={authorizeImmediately}
+                    onChange={e => setAuthorizeImmediately(e.target.checked)}
+                    className="h-4 w-4 rounded border-zinc-700 text-cyan-400 focus:ring-cyan-400 bg-zinc-800"
+                  />
+                  <div>
+                    <div className="text-sm font-bold text-white">
+                      Immediately authorize customer to enter Steam Room
+                    </div>
+                    <div className="text-xs text-zinc-400">
+                      Direct access authorization without Admin approval. Service completion can be marked in History.
+                    </div>
+                  </div>
+                </label>
+              </div>
+
+              {/* Submit Button */}
+              <div className="pt-2">
+                <button
+                  type="submit"
+                  disabled={submitting || !selectedCustomer || !activeOffering || (paymentMethod !== "CASH" && !proofFile)}
+                  className="w-full flex items-center justify-center gap-2 rounded-xl bg-cyan-400 py-3.5 text-base font-black text-zinc-950 hover:bg-cyan-300 disabled:opacity-40 transition-all shadow-lg shadow-cyan-400/10 active:scale-[0.99]"
+                >
+                  <Sparkle weight="fill" className="h-5 w-5" />
+                  <span>
+                    {submitting
+                      ? "Recording & Authorizing…"
+                      : authorizeImmediately
+                      ? `Register & Authorize Access (${formatETB(activeOffering?.price || 0)})`
+                      : `Register Steam Service (${formatETB(activeOffering?.price || 0)})`}
+                  </span>
+                </button>
+              </div>
+            </form>
+          )}
+          </div>
+
+          {/* Workflow Guide Info Card */}
+          <div className="space-y-4">
+            <div className="rounded-2xl border border-zinc-800 bg-zinc-900/80 p-5 space-y-4">
+              <h4 className="text-sm font-bold text-white uppercase tracking-wider flex items-center gap-2">
+                <Drop weight="fill" className="h-4 w-4 text-cyan-400" />
+                Streamlined Steam Workflow
+              </h4>
+              <ol className="space-y-3 text-xs text-zinc-300">
+                <li className="flex gap-2.5">
+                  <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-cyan-400/20 text-[11px] font-bold text-cyan-300">1</span>
+                  <span><strong>Select customer:</strong> Search and select their registered gym member record.</span>
+                </li>
+                <li className="flex gap-2.5">
+                  <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-cyan-400/20 text-[11px] font-bold text-cyan-300">2</span>
+                  <span><strong>Record payment:</strong> Upload photo evidence of cash payment or mobile transfer.</span>
+                </li>
+                <li className="flex gap-2.5">
+                  <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-cyan-400/20 text-[11px] font-bold text-cyan-300">3</span>
+                  <span><strong>Direct authorization:</strong> Reception immediately grants customer room access.</span>
+                </li>
+                <li className="flex gap-2.5">
+                  <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-cyan-400/20 text-[11px] font-bold text-cyan-300">4</span>
+                  <span><strong>Complete service:</strong> Mark service completed in History when the customer exits.</span>
+                </li>
+                <li className="flex gap-2.5">
+                  <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-lime-400/20 text-[11px] font-bold text-lime-300">5</span>
+                  <span><strong>Admin accountability:</strong> Full transaction, payment evidence, and responsible staff details automatically available to Admin for monitoring.</span>
+                </li>
+              </ol>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* SECTION 2: HISTORY (PERMANENT ACCOUNTABILITY & MANAGEMENT) */}
+      {activeTab === "history" && (
+        <div className="space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div>
+              <h3 className="text-lg font-bold text-white">Steam Transaction & Usage History</h3>
+              <p className="text-xs text-zinc-400">
+                Permanent record of registrations, payments, responsible staff, room authorizations, and session completions.
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <input
+                type="text"
+                value={historySearch}
+                onChange={e => setHistorySearch(e.target.value)}
+                placeholder="Search member, code, ref, staff…"
+                className={`${inputClass} max-w-[210px]`}
+              />
+              <select
+                value={paymentMethodFilter}
+                onChange={e => setPaymentMethodFilter(e.target.value)}
+                className={`${inputClass} max-w-[170px]`}
+              >
+                <option value="ALL">All Methods</option>
+                <option value="TELEBIRR">Telebirr</option>
+                <option value="CBE_BIRR">CBE Birr</option>
+                <option value="CASH">Cash</option>
+              </select>
+              <input
+                type="date"
+                value={dateFilter}
+                onChange={e => setDateFilter(e.target.value)}
+                className={`${inputClass} max-w-[150px]`}
+              />
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-zinc-800 bg-zinc-900 overflow-x-auto shadow-sm">
+            <table className="w-full min-w-[800px] text-left text-sm">
+              <thead className="bg-zinc-800/60 text-xs font-bold uppercase text-zinc-400">
+                <tr>
+                  <th className="p-3.5">Registration Date</th>
+                  <th className="p-3.5">Customer Information</th>
+                  <th className="p-3.5">Payment Amount</th>
+                  <th className="p-3.5">Payment Method</th>
+                  <th className="p-3.5">Payment Status</th>
+                  <th className="p-3.5">Reception Staff</th>
+                  <th className="p-3.5">Payment Photo</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-zinc-800">
+                {filteredHistory.map(r => {
+                  const normalizedMethod = (r.payment_method || "CASH").toUpperCase().trim();
+                  const methodLabel = normalizedMethod === "TELEBIRR" ? "Telebirr" : normalizedMethod === "CBE_BIRR" || normalizedMethod === "CBE BIRR" ? "CBE Birr" : "Cash";
+                  const methodBadgeColor = normalizedMethod === "TELEBIRR" ? "bg-amber-400/10 text-amber-300 border-amber-400/30" : normalizedMethod === "CBE_BIRR" || normalizedMethod === "CBE BIRR" ? "bg-purple-400/10 text-purple-300 border-purple-400/30" : "bg-zinc-800 text-zinc-300 border-zinc-700";
+
+                  const isPaid = (r.payment_status || "").toUpperCase() === "PAID" || (r.payment_status || "").toUpperCase() === "APPROVED" || (r.service_status || "").toUpperCase() === "COMPLETED";
+
+                  return (
+                    <tr key={r.id} className="hover:bg-zinc-800/30 transition-colors">
+                      {/* Date & Time */}
+                      <td className="p-3.5 text-xs text-zinc-400">
+                        <div>{new Date(r.created_at).toLocaleDateString()}</div>
+                        <div className="text-[11px] text-zinc-500 font-mono">
+                          {new Date(r.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                        </div>
+                      </td>
+
+                      {/* Customer */}
+                      <td className="p-3.5">
+                        <div className="font-bold text-white">{r.customer_name}</div>
+                        <div className="text-xs text-zinc-400 flex items-center gap-1.5 mt-0.5">
+                          <span className="font-mono text-cyan-300">{r.customer_code}</span>
+                          <span>·</span>
+                          <span>{r.customer_category}</span>
+                          {r.customer_phone && (
+                            <>
+                              <span>·</span>
+                              <span>{r.customer_phone}</span>
+                            </>
+                          )}
+                        </div>
+                      </td>
+
+                      {/* Payment Amount */}
+                      <td className="p-3.5">
+                        <span className="font-bold text-lime-400">{formatETB(r.amount)}</span>
+                      </td>
+
+                      {/* Payment Method */}
+                      <td className="p-3.5">
+                        <span className={`inline-block rounded-md px-2 py-0.5 text-xs font-semibold border ${methodBadgeColor}`}>
+                          {methodLabel}
+                        </span>
+                        {r.payment_reference && (
+                          <div className="text-[11px] text-zinc-500 font-mono mt-0.5 truncate max-w-[140px]" title={r.payment_reference}>
+                            Ref: {r.payment_reference}
+                          </div>
+                        )}
+                      </td>
+
+                      {/* Payment Status */}
+                      <td className="p-3.5">
+                        <span className={`inline-block rounded-full px-2.5 py-0.5 text-[11px] font-bold border ${
+                          isPaid ? "bg-emerald-400/15 border-emerald-400/30 text-emerald-300" : "bg-amber-400/15 border-amber-400/30 text-amber-300"
+                        }`}>
+                          {isPaid ? "PAID" : (r.payment_status || "PAID")}
+                        </span>
+                      </td>
+
+                      {/* Staff Member Responsible */}
+                      <td className="p-3.5 text-xs">
+                        <div className="text-zinc-200 font-medium">
+                          {r.registered_by_email ? r.registered_by_email.split("@")[0] : "Reception"}
+                        </div>
+                        <div className="text-[11px] text-zinc-500 truncate max-w-[140px]" title={r.registered_by_email || ""}>
+                          {r.registered_by_email || "Staff account"}
+                        </div>
+                      </td>
+
+                      {/* Payment Photo */}
+                      <td className="p-3.5">
+                        {r.payment_proof_path ? (
+                          <button
+                            onClick={() => handleViewProof(r)}
+                            className="flex items-center gap-1.5 rounded-lg border border-zinc-700 bg-zinc-800 px-2.5 py-1 text-xs text-zinc-300 hover:text-white hover:bg-zinc-700 transition-colors"
+                          >
+                            <Eye className="h-3.5 w-3.5 text-cyan-400" />
+                            <span>View Photo</span>
+                          </button>
+                        ) : (
+                          <span className="text-xs text-zinc-500 italic">No photo (Cash)</span>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+
+            {filteredHistory.length === 0 && (
+              <div className="p-8 text-center text-zinc-500 text-sm">
+                No steam transactions found.
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: VIEW PAYMENT PROOF PHOTO (AUTHENTICATED SHORT-LIVED SIGNED URL) */}
+      {(viewingProofUrl || loadingProof) && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
+          <div className="relative w-full max-w-lg rounded-2xl border border-zinc-800 bg-zinc-900 p-5 space-y-4 shadow-2xl">
+            <div className="flex items-center justify-between">
+              <h4 className="font-bold text-white text-sm truncate mr-4">{viewingProofTitle}</h4>
+              <button
+                onClick={() => setViewingProofUrl(null)}
+                className="rounded-full bg-zinc-800 p-1.5 text-zinc-400 hover:text-white"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="rounded-xl overflow-hidden bg-black flex items-center justify-center min-h-[300px] max-h-[70vh]">
+              {loadingProof ? (
+                <div className="text-zinc-500 text-sm">Generating secure view link…</div>
+              ) : (
+                <img
+                  src={viewingProofUrl || ""}
+                  alt="Payment proof"
+                  className="w-full h-full object-contain"
+                />
+              )}
+            </div>
+
+            <div className="flex justify-between items-center text-xs text-zinc-500 pt-1">
+              <span>Private authenticated signed link (1-hour validity)</span>
+              <button
+                onClick={() => setViewingProofUrl(null)}
+                className="rounded-lg bg-zinc-800 px-4 py-2 font-bold text-white hover:bg-zinc-700"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

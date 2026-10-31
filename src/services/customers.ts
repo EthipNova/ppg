@@ -14,6 +14,7 @@ export interface CustomerRecord {
   address: string | null;
   join_date: string | null;
   status: string;
+  customer_type: string | null;
   notes: string | null;
   created_at: string;
   updated_at: string;
@@ -40,14 +41,27 @@ export interface CustomerPage {
   total: number;
 }
 
-const CUSTOMER_FIELDS = "id, customer_code, user_id, first_name, last_name, phone, email, national_id, date_of_birth, gender, address, join_date, status, notes, created_at, updated_at";
+const CUSTOMER_FIELDS = "id, customer_code, user_id, first_name, last_name, phone, email, national_id, date_of_birth, gender, address, join_date, status, customer_type, notes, created_at, updated_at";
 
-export async function fetchCustomers({ search, status, page, pageSize }: { search: string; status: string; page: number; pageSize: number }): Promise<CustomerPage> {
+export async function fetchCustomers({
+  search,
+  status,
+  category = "all",
+  page,
+  pageSize,
+}: {
+  search: string;
+  status: string;
+  category?: string;
+  page: number;
+  pageSize: number;
+}): Promise<CustomerPage> {
   const from = page * pageSize;
   const to = from + pageSize - 1;
   let query = supabase.from("customers").select(CUSTOMER_FIELDS, { count: "exact" }).order("created_at", { ascending: false }).range(from, to);
 
   if (status !== "all") query = query.eq("status", status.toUpperCase());
+  if (category && category !== "all") query = query.eq("customer_type", category.toUpperCase());
   const normalizedSearch = search.trim().replace(/[,%()]/g, " ");
   if (normalizedSearch) {
     query = query.or(`first_name.ilike.%${normalizedSearch}%,last_name.ilike.%${normalizedSearch}%,customer_code.ilike.%${normalizedSearch}%,phone.ilike.%${normalizedSearch}%,email.ilike.%${normalizedSearch}%`);
@@ -73,4 +87,48 @@ export async function fetchCustomers({ search, status, page, pageSize }: { searc
   if (plansResult.error) throw new Error(`Unable to load membership plans: ${plansResult.error.message}`);
 
   return { customers, memberships, plans: (plansResult.data ?? []) as PlanRecord[], total: count ?? 0 };
+}
+
+export interface ResetCredentialsResult {
+  success: boolean;
+  customerId: string;
+  customerName: string;
+  customerCode: string;
+  loginId: string;
+  newTempPassword: string;
+}
+
+/**
+ * Securely resets a customer's login credentials via Supabase RPC.
+ * Never stores or retrieves plaintext passwords in database tables.
+ * Returns the one-time generated temporary password to authorized Admin.
+ */
+export async function adminResetCustomerCredentials(customerId: string): Promise<ResetCredentialsResult> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { data, error } = await (supabase as any).rpc("admin_reset_customer_credentials", {
+    p_customer_id: customerId,
+  });
+
+  if (error) {
+    console.error("admin_reset_customer_credentials RPC error:", error);
+    throw new Error(`Failed to reset credentials: ${error.message}`);
+  }
+
+  const result = data as {
+    success: boolean;
+    customer_id: string;
+    customer_name: string;
+    customer_code: string;
+    login_id: string;
+    new_temp_password: string;
+  };
+
+  return {
+    success: result.success,
+    customerId: result.customer_id,
+    customerName: result.customer_name,
+    customerCode: result.customer_code,
+    loginId: result.login_id,
+    newTempPassword: result.new_temp_password,
+  };
 }

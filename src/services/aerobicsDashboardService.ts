@@ -11,6 +11,8 @@ export interface AerobicsCustomerData {
   email: string | null;
   phone: string;
   aerobicsGroupId: string | null;
+  gender?: string | null;
+  photoUrl?: string | null;
 }
 
 export interface AerobicsPlanData {
@@ -128,6 +130,8 @@ interface CustomerDbRow {
   aerobics_group_id: string | null;
   email: string | null;
   phone: string;
+  gender?: string | null;
+  photo_url?: string | null;
 }
 
 interface SessionDbRow {
@@ -207,7 +211,7 @@ export async function fetchAerobicsDashboardData(
     // 1. Fetch Customer Record
     const customerRes = await supabase
       .from("customers")
-      .select("id, customer_code, first_name, last_name, customer_type, status, aerobics_group_id, email, phone")
+      .select("id, customer_code, first_name, last_name, customer_type, status, aerobics_group_id, email, phone, gender, photo_url")
       .eq("id", customerId)
       .maybeSingle();
 
@@ -232,6 +236,8 @@ export async function fetchAerobicsDashboardData(
       email: customerRow.email ?? null,
       phone: customerRow.phone,
       aerobicsGroupId: customerRow.aerobics_group_id ?? null,
+      gender: customerRow.gender ?? null,
+      photoUrl: customerRow.photo_url ?? null,
     };
 
     // 2. Parallel secondary queries: Membership, Attendance, Session, and Occupancy

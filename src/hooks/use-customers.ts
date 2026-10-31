@@ -3,7 +3,7 @@ import { fetchCustomers, type CustomerPage } from "../services/customers";
 
 const PAGE_SIZE = 25;
 
-export function useCustomers(search: string, status: string) {
+export function useCustomers(search: string, status: string, category: string = "all") {
   const [page, setPage] = useState(0);
   const [result, setResult] = useState<CustomerPage | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -13,14 +13,14 @@ export function useCustomers(search: string, status: string) {
     setIsLoading(true);
     setError(null);
     try {
-      setResult(await fetchCustomers({ search, status, page, pageSize: PAGE_SIZE }));
+      setResult(await fetchCustomers({ search, status, category, page, pageSize: PAGE_SIZE }));
     } catch (cause) {
       console.error("Unable to load customers", cause);
       setError(cause instanceof Error ? cause.message : "Unable to load customers.");
     } finally {
       setIsLoading(false);
     }
-  }, [page, search, status]);
+  }, [category, page, search, status]);
 
   useEffect(() => {
     void refresh();
@@ -28,7 +28,7 @@ export function useCustomers(search: string, status: string) {
 
   useEffect(() => {
     setPage(0);
-  }, [search, status]);
+  }, [category, search, status]);
 
   return {
     customers: result?.customers ?? [],

@@ -1,6 +1,8 @@
 import { supabase } from "../integrations/supabase/client";
-import type { Session, AuthChangeEvent } from "@supabase/supabase-js";
+import type { Session, AuthChangeEvent, SupabaseClient } from "@supabase/supabase-js";
 import type { AuthUser, CustomerCategory } from "../types";
+
+const authDb = supabase as unknown as SupabaseClient;
 
 export interface TrustedAuthResult {
   authUser: AuthUser;
@@ -11,11 +13,42 @@ export interface TrustedAuthResult {
   rejectReason?: "inactive" | "missing_profile" | "unknown_role" | "conflicting_role" | "not_found" | "database_error";
 }
 
+export async function resolveLoginIdentifier(
+  identifier: string
+): Promise<{ email: string; role: string; loginId: string } | null> {
+  const clean = identifier.trim();
+  if (!clean) return null;
+
+  try {
+    const { data, error } = await authDb.rpc("resolve_login_identifier", {
+      p_identifier: clean,
+    });
+
+    if (error) {
+      console.warn("resolve_login_identifier RPC error:", error);
+      return null;
+    }
+
+    if (data && Array.isArray(data) && data.length > 0) {
+      const match = data[0] as { email: string; role: string; login_id: string };
+      return {
+        email: match.email,
+        role: match.role,
+        loginId: match.login_id,
+      };
+    }
+    return null;
+  } catch (err) {
+    console.warn("resolveLoginIdentifier exception:", err);
+    return null;
+  }
+}
+
 /**
  * Validates credentials against real Supabase Auth GoTrue service.
  */
 export async function signInWithEmail(email: string, password: string) {
-  const trimmed = email.trim();
+  const trimmed = email.trim().toLowerCase();
   if (!trimmed || !password) {
     throw new Error("Email and password are required.");
   }
@@ -24,6 +57,7 @@ export async function signInWithEmail(email: string, password: string) {
     password,
   });
 }
+
 
 /**
  * Retrieves the current persisted session from Supabase Auth storage.
@@ -77,6 +111,18 @@ export async function requestPasswordRecovery(email: string) {
 
   return supabase.auth.resetPasswordForEmail(trimmed, {
     redirectTo: redirectUrl,
+  });
+}
+
+/**
+ * Updates the password for the current authenticated recovery or active session.
+ */
+export async function updateUserPassword(newPassword: string) {
+  if (!newPassword || newPassword.length < 6) {
+    throw new Error("Password must be at least 6 characters.");
+  }
+  return supabase.auth.updateUser({
+    password: newPassword,
   });
 }
 
@@ -144,6 +190,16 @@ export async function resolveTrustedUserRole(userId: string): Promise<TrustedAut
       .eq("id", userId)
       .maybeSingle();
 
+    const userData = userRes.data as unknown as DbUser | null;
+
+    console.log("[Auth-Diag] Stage 4: public.users profile lookup", {
+      userId,
+      found: Boolean(userData),
+      error: userRes.error ? { message: userRes.error.message, code: userRes.error.code } : null,
+      role: userData?.role ?? null,
+      isActive: userData?.is_active ?? null,
+    });
+
     // A failed lookup is not evidence that provisioning is missing. Preserve the
     // distinction so the login screen can ask the user to retry instead.
     if (userRes.error) {
@@ -154,8 +210,6 @@ export async function resolveTrustedUserRole(userId: string): Promise<TrustedAut
         rejectReason: "database_error",
       };
     }
-
-    const userData = userRes.data as unknown as DbUser | null;
 
     if (userData) {
       // Rule 1: Reject inactive accounts
@@ -212,6 +266,13 @@ export async function resolveTrustedUserRole(userId: string): Promise<TrustedAut
           .maybeSingle();
 
         const staffData = staffRes.data as unknown as DbStaffProfile | null;
+        console.log("[Auth-Diag] Stage 4: staff_profiles profile lookup", {
+          userId,
+          found: Boolean(staffData),
+          error: staffRes.error ? { message: staffRes.error.message, code: staffRes.error.code } : null,
+          staffActive: staffData?.is_active,
+        });
+
         if (staffRes.error) {
           return {
             authUser: { id: userData.id, name: "Staff", role: "staff" },

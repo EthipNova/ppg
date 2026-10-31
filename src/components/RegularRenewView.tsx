@@ -1,8 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import {
   CreditCard,
-  Clock,
-  Calendar,
   CheckCircle,
   Warning,
   Info,
@@ -14,17 +12,18 @@ import {
   Trash,
   Image as ImageIcon,
   Hourglass,
-  ArrowRight,
+  ChalkboardTeacher,
 } from "@phosphor-icons/react";
 import {
   fetchRegularRenewalData,
   submitRegularRenewalProof,
   validateProofFile,
-  MAX_FILE_SIZE_BYTES,
   type RegularRenewalState,
   type RegularRenewalPlan,
 } from "../services/regularRenewalService";
+import { stopCustomerPersonalTraining } from "../services/personalTrainerService";
 import { formatETB } from "../context/GymContext";
+import { toast } from "sonner";
 
 const CARD = "bg-zinc-900 border border-zinc-800 rounded-2xl p-6";
 const INPUT = "w-full bg-zinc-800 border border-zinc-700 rounded-xl px-4 py-3 text-white placeholder:text-zinc-500 focus:outline-none focus:border-lime-400/50";
@@ -70,6 +69,8 @@ export default function RegularRenewView({ customerId, category = "REGULAR", onR
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [submittedProof, setSubmittedProof] = useState<SubmittedProofInfo | null>(null);
+  const [stopConfirmOpen, setStopConfirmOpen] = useState(false);
+  const [isStoppingTrainer, setIsStoppingTrainer] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const renewalRequestKey = useRef<string | null>(null);
@@ -108,6 +109,29 @@ export default function RegularRenewView({ customerId, category = "REGULAR", onR
       }
     };
   }, [proofPreviewUrl]);
+
+  const handleStopTrainer = async () => {
+    setIsStoppingTrainer(true);
+    try {
+      await stopCustomerPersonalTraining(customerId);
+      toast.success("Personal training arrangement ended. Renewal fee updated.");
+      setState(prev => {
+        if (prev.status !== "success") return prev;
+        return {
+          ...prev,
+          data: {
+            ...prev.data,
+            trainerArrangement: null,
+          },
+        };
+      });
+      setStopConfirmOpen(false);
+    } catch (err: any) {
+      toast.error(err?.message || "Failed to stop personal training.");
+    } finally {
+      setIsStoppingTrainer(false);
+    }
+  };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -152,13 +176,16 @@ export default function RegularRenewView({ customerId, category = "REGULAR", onR
 
   const handleProofSubmit = async () => {
     if (state.status !== "success") return;
-    const { currentMembership, availablePlans } = state.data;
+    const { currentMembership, availablePlans, trainerArrangement } = state.data;
     const selectedPlan = availablePlans.find(p => p.id === selectedPlanId) || availablePlans[0];
 
     if (!selectedPlan) {
       setSubmitError("Please select a renewal plan first.");
       return;
     }
+
+    const trainerFee = trainerArrangement ? Number(trainerArrangement.monthlyTrainerFee) || 0 : 0;
+    const totalAmount = Number(selectedPlan.price) + trainerFee;
 
     if (method === "cash") {
       setShowReceptionModal(true);
@@ -187,6 +214,7 @@ export default function RegularRenewView({ customerId, category = "REGULAR", onR
       plan: selectedPlan,
       paymentMethod: method,
       file: proofFile,
+      trainerArrangement,
     });
 
     setIsSubmitting(false);
@@ -201,7 +229,7 @@ export default function RegularRenewView({ customerId, category = "REGULAR", onR
     setSubmittedProof({
       paymentId: result.paymentId,
       planName: selectedPlan.name,
-      amount: selectedPlan.price,
+      amount: totalAmount,
       method,
       fileName: proofFile.name,
     });
@@ -256,10 +284,14 @@ export default function RegularRenewView({ customerId, category = "REGULAR", onR
   }
 
   // 4. Success State
-  const { customer, currentMembership, availablePlans } = state.data;
+  const { customer, currentMembership, availablePlans, trainerArrangement } = state.data;
   const selectedPlan: RegularRenewalPlan | undefined = availablePlans.find(
     p => p.id === selectedPlanId
   ) || availablePlans[0];
+
+  const planPrice = selectedPlan ? Number(selectedPlan.price) || 0 : 0;
+  const trainerFee = trainerArrangement ? Number(trainerArrangement.monthlyTrainerFee) || 0 : 0;
+  const totalDue = planPrice + trainerFee;
 
   return (
     <div className="max-w-lg mx-auto space-y-5">
@@ -314,6 +346,38 @@ export default function RegularRenewView({ customerId, category = "REGULAR", onR
           </div>
         )}
       </div>
+
+      {/* Active Personal Trainer Banner */}
+      {trainerArrangement ? (
+        <div className="bg-lime-400/10 border border-lime-400/30 rounded-2xl p-4 flex items-start justify-between gap-4">
+          <div className="flex items-start gap-3">
+            <div className="w-10 h-10 rounded-xl bg-lime-400/20 border border-lime-400/30 flex items-center justify-center shrink-0 text-lime-400">
+              <ChalkboardTeacher weight="bold" className="w-5 h-5" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="px-2 py-0.5 rounded text-[10px] font-extrabold uppercase tracking-wide bg-lime-400/20 text-lime-300 border border-lime-400/30">
+                  Personal Training Active
+                </span>
+              </div>
+              <h4 className="text-sm font-bold text-white mt-1">
+                Coach {trainerArrangement.trainerName}
+              </h4>
+              <p className="text-xs text-zinc-300 mt-0.5">
+                Monthly Trainer Fee: <strong className="text-lime-400">{formatETB(trainerArrangement.monthlyTrainerFee)}</strong> · Included in renewal
+              </p>
+            </div>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => setStopConfirmOpen(true)}
+            className="text-xs text-red-400 hover:text-red-300 font-semibold px-3 py-1.5 rounded-lg bg-red-400/10 hover:bg-red-400/20 border border-red-400/30 transition-colors shrink-0"
+          >
+            Stop Training
+          </button>
+        </div>
+      ) : null}
 
       {/* Submitted Proof Confirmation Banner (if pending request was submitted) */}
       {submittedProof && (
@@ -545,11 +609,22 @@ export default function RegularRenewView({ customerId, category = "REGULAR", onR
 
         {/* Real Summary Breakdown */}
         {selectedPlan && (
-          <div className="bg-zinc-800/50 rounded-xl p-4 space-y-2 text-sm border border-zinc-700/50">
+          <div className="bg-zinc-800/50 rounded-xl p-4 space-y-2.5 text-sm border border-zinc-700/50">
             <div className="flex justify-between text-xs">
-              <span className="text-zinc-400">Selected Plan</span>
-              <span className="font-semibold text-white">{selectedPlan.name}</span>
+              <span className="text-zinc-400">Membership Fee ({selectedPlan.name})</span>
+              <span className="font-semibold text-white">{formatETB(selectedPlan.price)}</span>
             </div>
+
+            {trainerArrangement ? (
+              <div className="flex justify-between text-xs text-lime-300">
+                <span className="text-zinc-400 flex items-center gap-1.5">
+                  <ChalkboardTeacher weight="fill" className="w-3.5 h-3.5 text-lime-400" />
+                  Trainer Fee (Coach {trainerArrangement.trainerName})
+                </span>
+                <span className="font-semibold text-lime-400">+{formatETB(trainerArrangement.monthlyTrainerFee)}</span>
+              </div>
+            ) : null}
+
             <div className="flex justify-between text-xs">
               <span className="text-zinc-400">Duration</span>
               <span className="font-semibold text-white">{selectedPlan.durationDays} days</span>
@@ -558,10 +633,10 @@ export default function RegularRenewView({ customerId, category = "REGULAR", onR
               <span className="text-zinc-400">Payment Option</span>
               <span className="font-semibold text-white">{METHOD_LABELS[method]}</span>
             </div>
-            <div className="flex justify-between border-t border-zinc-700/80 pt-2">
-              <span className="text-zinc-300 font-semibold text-sm">Total Due</span>
+            <div className="flex justify-between border-t border-zinc-700/80 pt-2.5">
+              <span className="text-zinc-300 font-semibold text-sm">Total Renewal Due</span>
               <span className="font-black text-lime-400 text-lg">
-                {formatETB(selectedPlan.price)}
+                {formatETB(totalDue)}
               </span>
             </div>
           </div>
@@ -584,7 +659,7 @@ export default function RegularRenewView({ customerId, category = "REGULAR", onR
             className="w-full bg-lime-400 text-zinc-950 font-bold py-3.5 rounded-xl hover:bg-lime-300 transition-colors disabled:opacity-50 active:scale-[0.98] flex items-center justify-center gap-2 text-sm"
           >
             <User weight="bold" className="w-4 h-4" />
-            Continue at Reception ({selectedPlan ? formatETB(selectedPlan.price) : "—"})
+            Continue at Reception ({selectedPlan ? formatETB(totalDue) : "—"})
           </button>
         ) : (
           <button
@@ -601,12 +676,55 @@ export default function RegularRenewView({ customerId, category = "REGULAR", onR
             ) : (
               <>
                 <UploadSimple weight="bold" className="w-4 h-4" />
-                Submit Payment Proof ({selectedPlan ? formatETB(selectedPlan.price) : "—"})
+                Submit Payment Proof ({selectedPlan ? formatETB(totalDue) : "—"})
               </>
             )}
           </button>
         )}
       </div>
+
+      {/* Stop Personal Training Confirmation Modal */}
+      {stopConfirmOpen && trainerArrangement && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
+          <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6 w-full max-w-md space-y-4">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-full bg-red-400/10 border border-red-400/20 flex items-center justify-center shrink-0">
+                <Warning weight="fill" className="w-5 h-5 text-red-400" />
+              </div>
+              <div>
+                <h4 className="font-bold text-white text-base">Stop Personal Training?</h4>
+                <p className="text-xs text-zinc-400">Coach {trainerArrangement.trainerName}</p>
+              </div>
+            </div>
+
+            <p className="text-xs text-zinc-300 leading-relaxed">
+              Are you sure you want to end your personal training arrangement? You will no longer be charged the personal trainer fee (<strong>{formatETB(trainerArrangement.monthlyTrainerFee)}</strong>/month) on this or future renewals. Your past payment and workout history will remain preserved.
+            </p>
+
+            <div className="flex gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setStopConfirmOpen(false)}
+                disabled={isStoppingTrainer}
+                className="flex-1 bg-zinc-800 hover:bg-zinc-700 text-white font-semibold py-2.5 rounded-xl text-xs transition-colors"
+              >
+                Keep Trainer
+              </button>
+              <button
+                type="button"
+                onClick={handleStopTrainer}
+                disabled={isStoppingTrainer}
+                className="flex-1 bg-red-500 hover:bg-red-400 text-white font-bold py-2.5 rounded-xl text-xs transition-colors flex items-center justify-center gap-1.5"
+              >
+                {isStoppingTrainer ? (
+                  <div className="w-3.5 h-3.5 border-2 border-white/20 border-t-white rounded-full animate-spin" />
+                ) : null}
+                Confirm Stop
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Reception Instructions Modal (for Cash) */}
       {showReceptionModal && (
@@ -629,11 +747,17 @@ export default function RegularRenewView({ customerId, category = "REGULAR", onR
               </div>
               <div className="flex justify-between">
                 <span className="text-zinc-400">Plan</span>
-                <span className="font-semibold text-lime-400">{selectedPlan?.name}</span>
+                <span className="font-semibold text-white">{selectedPlan?.name} ({formatETB(planPrice)})</span>
               </div>
-              <div className="flex justify-between">
-                <span className="text-zinc-400">Amount Due</span>
-                <span className="font-black text-white">{selectedPlan ? formatETB(selectedPlan.price) : ""}</span>
+              {trainerArrangement && (
+                <div className="flex justify-between text-lime-300">
+                  <span className="text-zinc-400">Personal Trainer</span>
+                  <span className="font-semibold">Coach {trainerArrangement.trainerName} ({formatETB(trainerFee)})</span>
+                </div>
+              )}
+              <div className="flex justify-between border-t border-zinc-700 pt-2 font-black">
+                <span className="text-zinc-300">Total Amount Due</span>
+                <span className="font-black text-lime-400 text-sm">{formatETB(totalDue)}</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-zinc-400">Selected Method</span>

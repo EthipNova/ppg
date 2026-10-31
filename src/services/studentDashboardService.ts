@@ -16,6 +16,8 @@ export interface StudentDashboardData {
     verificationStatus: string;
     verifiedAt: string | null;
     requestedPlanId: string | null;
+    gender?: string | null;
+    photoUrl?: string | null;
   };
   membership: null | {
     id: string;
@@ -93,7 +95,7 @@ export async function fetchStudentDashboardData(): Promise<StudentDashboardState
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const customerResult = await (supabase as any)
     .from("customers")
-    .select("id, user_id, customer_code, first_name, last_name, customer_type, status, join_date, phone, email, student_id, institution, student_verification_status, student_verified_at, requested_plan_id")
+    .select("id, user_id, customer_code, first_name, last_name, customer_type, status, join_date, phone, email, student_id, institution, student_verification_status, student_verified_at, requested_plan_id, gender, photo_url")
     .eq("user_id", authUser.id)
     .eq("customer_type", "STUDENT")
     .maybeSingle();
@@ -224,6 +226,8 @@ export async function fetchStudentDashboardData(): Promise<StudentDashboardState
         verificationStatus: toString(customer.student_verification_status, "PENDING"),
         verifiedAt: customer.student_verified_at == null ? null : String(customer.student_verified_at),
         requestedPlanId: customer.requested_plan_id == null ? null : String(customer.requested_plan_id),
+        gender: customer.gender == null ? null : String(customer.gender),
+        photoUrl: customer.photo_url == null ? null : String(customer.photo_url),
       },
       membership,
       requestedPlan,

@@ -6,25 +6,28 @@ export interface Member {
   id: string;
   name: string;
   phone: string;
-  email: string;
+  email?: string;
   memberId: string;
   planId: string;
   joinDate: string;
   expiryDate: string;
   status: MemberStatus;
   lastVisit: string | null;
-  emergencyContact: string;
-  emergencyPhone: string;
-  medicalNotes: string;
+  emergencyContact?: string;
+  emergencyPhone?: string;
+  medicalNotes?: string;
   emailNotifications: boolean;
   balanceDue: number;
   category: CustomerCategory;
+  gender?: string;
+  photoUrl?: string;
   studentId?: string;
   institution?: string;
   studentVerified?: boolean;
   verifiedBy?: string;
   verifiedAt?: string;
   aerobicsGroupId?: string;
+  paymentProofPath?: string;
 }
 
 export interface Plan {
@@ -120,6 +123,8 @@ export interface AuthUser {
   category?: CustomerCategory;
   customerCode?: string;
   status?: string;
+  gender?: string;
+  photoUrl?: string;
 }
 
 export interface Trainer {
@@ -259,13 +264,13 @@ export interface SteamUsage {
 export type Language = "en" | "am";
 
 /** Statut opérationnel d'un casier. */
-export type LockerStatus = "AVAILABLE" | "IN_USE" | "OUT_OF_SERVICE";
+export type LockerStatus = "AVAILABLE" | "IN_USE" | "OUT_OF_SERVICE" | "OCCUPIED" | "KEY_OUT" | "MAINTENANCE";
 
 /** Zone physique du casier. */
 export type LockerSection = "Men" | "Women" | "VIP" | "General";
 
 /** Statut d'une attribution de casier. */
-export type LockerAssignmentStatus = "active" | "returned" | "lost";
+export type LockerAssignmentStatus = "active" | "returned" | "lost" | "ACTIVE" | "RETURNED" | "CANCELLED";
 
 /** Casier de la salle (section, numéro et porte-clés). */
 export interface Locker {
@@ -295,4 +300,7 @@ export interface LockerAssignment {
   notes: string;
   keyNumber?: string;
   returnedBy?: string;
+  customerCode?: string;
+  customerPhone?: string | null;
+  customerCategory?: string;
 }

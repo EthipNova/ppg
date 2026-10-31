@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Users, Coins, TrendUp, Receipt, Gear, Plus, X, MagnifyingGlass, User, ShieldCheck, Drop } from "@phosphor-icons/react";
+import { Users, Coins, TrendUp, Receipt, Gear, User, ShieldCheck, Drop } from "@phosphor-icons/react";
 import LockersManagement from "./LockersManagement";
 import SteamManagement from "./SteamManagement";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
@@ -10,14 +10,18 @@ import { CategoriesView } from "./CategoryManagement";
 import { PlansView } from "./PlansView";
 import { CustomersView, FinancesView } from "./AdminCustomers";
 import { ReportsView } from "./AdminReports";
+import AdminStaffManagement from "./AdminStaffManagement";
+import AdminTrainerManagement from "./AdminTrainerManagement";
 import { useDashboardStats } from "../hooks/use-dashboard-stats";
 import { useDashboardSupplementalData } from "../hooks/use-dashboard-supplemental-data";
 
-const TABS = ["dashboard", "customers", "categories", "plans", "finances", "reports", "steam", "lockers", "settings"] as const;
+const TABS = ["dashboard", "customers", "trainers", "staff", "categories", "plans", "finances", "reports", "steam", "lockers", "settings"] as const;
 type Tab = (typeof TABS)[number];
 const TAB_LABEL: Record<Tab, string> = {
   dashboard: "admin.tab.dashboard",
   customers: "admin.tab.customers",
+  trainers: "Trainers & PT",
+  staff: "Staff Management",
   categories: "admin.tab.categories",
   plans: "admin.tab.plans",
   finances: "admin.tab.finances",
@@ -45,19 +49,21 @@ export default function AdminPortal() {
         </div>
         <div className="flex gap-2 mb-8 overflow-x-auto pb-2">
           {TABS.map(key => (
-            <button key={key} onClick={() => setTab(key)} className={`px-4 py-2 rounded-lg text-sm font-semibold whitespace-nowrap transition-colors ${tab === key ? "bg-lime-400 text-zinc-950" : "bg-zinc-800 text-zinc-300 hover:bg-zinc-700"}`}>{t(TAB_LABEL[key])}</button>
+            <button key={key} onClick={() => setTab(key)} className={`px-4 py-2 rounded-lg text-sm font-semibold whitespace-nowrap transition-colors ${tab === key ? "bg-lime-400 text-zinc-950" : "bg-zinc-800 text-zinc-300 hover:bg-zinc-700"}`}>{key === "staff" || key === "trainers" ? TAB_LABEL[key] : t(TAB_LABEL[key])}</button>
           ))}
         </div>
         <AnimatePresence mode="wait">
           <motion.div key={tab} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} transition={{ duration: 0.2 }}>
             {tab === "dashboard" && <DashboardView />}
             {tab === "customers" && <CustomersView />}
+            {tab === "trainers" && <AdminTrainerManagement />}
+            {tab === "staff" && <AdminStaffManagement />}
             {tab === "categories" && <CategoriesView />}
             {tab === "plans" && <PlansView />}
             {tab === "finances" && <FinancesView />}
             {tab === "reports" && <ReportsView />}
-            {tab === "steam" && <SteamManagement canManageServices />}
-            {tab === "lockers" && <LockersManagement canManage />}
+            {tab === "steam" && <SteamManagement isAdmin={true} canManageServices={false} />}
+            {tab === "lockers" && <LockersManagement canManage={false} />}
             {tab === "settings" && <SettingsView />}
           </motion.div>
         </AnimatePresence>

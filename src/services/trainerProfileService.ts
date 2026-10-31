@@ -194,7 +194,15 @@ function serviceError(error: { message: string; code?: string; details?: string 
 }
 
 /** Read through server-side RPCs; the authenticated identity, role, and ownership are resolved in PostgreSQL. */
-export async function fetchTrainerProfileData(userId: string, from: string, to: string): Promise<TrainerProfileState> {
+export async function fetchTrainerProfileData(
+  userId: string,
+  from?: string,
+  to?: string
+): Promise<TrainerProfileState> {
+  const defaultRange = getTrainerRange();
+  const pFrom = from || defaultRange.from;
+  const pTo = to || defaultRange.to;
+
   if (!UUID_REGEX.test(userId)) return { status: "not_found", message: "No authenticated trainer session was found." };
   const { data: auth, error: authError } = await supabase.auth.getUser();
   if (authError) {
@@ -213,7 +221,7 @@ export async function fetchTrainerProfileData(userId: string, from: string, to: 
   if (auth.user.id !== userId) {
     return { status: "not_found", message: "Your sign-in changed. Refresh the page and retry." };
   }
-  const { data, error } = await trainerDb.rpc("trainer_portal_dashboard", { p_from: from, p_to: to });
+  const { data, error } = await trainerDb.rpc("trainer_portal_dashboard", { p_from: pFrom, p_to: pTo });
   if (error) {
     if (error.code === "P0001") {
       console.warn("[TrainerPortal] Dashboard access check rejected", { code: error.code, reason: error.message });

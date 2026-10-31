@@ -32,10 +32,19 @@ export interface RegularCurrentMembership {
   plan: RegularRenewalPlan | null;
 }
 
+export interface ActiveTrainerArrangement {
+  assignmentId: string;
+  trainerId: string;
+  trainerName: string;
+  specialization: string;
+  monthlyTrainerFee: number;
+}
+
 export interface RegularRenewalData {
   customer: RegularRenewalCustomer;
   currentMembership: RegularCurrentMembership | null;
   availablePlans: RegularRenewalPlan[];
+  trainerArrangement: ActiveTrainerArrangement | null;
 }
 
 export type RegularRenewalState =
@@ -141,14 +150,54 @@ export async function fetchRegularRenewalData(
       .eq("is_active", true)
       .order("price", { ascending: true });
 
-    const [membershipRes, plansRes] = await Promise.all([
+    const assignmentPromise = (supabase as any)
+      .from("trainer_assignments")
+      .select(`
+        id,
+        trainer_id,
+        monthly_fee_at_assignment,
+        trainer_profiles (
+          id,
+          first_name,
+          last_name,
+          specialization
+        )
+      `)
+      .eq("customer_id", customerId)
+      .eq("status", "ACTIVE")
+      .maybeSingle();
+
+    const feePromise = supabase
+      .from("settings")
+      .select("monthly_trainer_fee")
+      .limit(1)
+      .maybeSingle();
+
+    const [membershipRes, plansRes, assignmentRes, feeRes] = await Promise.all([
       membershipPromise,
       plansPromise,
+      assignmentPromise,
+      feePromise,
     ]);
 
     if (plansRes.error) {
       console.error("[RegularRenewalService] Error fetching plans:", plansRes.error);
       return { status: "error", error: "Unable to load renewal plans from database." };
+    }
+
+    // Map Active Trainer Arrangement
+    let trainerArrangement: ActiveTrainerArrangement | null = null;
+    const aData = assignmentRes.data as any;
+    if (aData) {
+      const tp = Array.isArray(aData.trainer_profiles) ? aData.trainer_profiles[0] : aData.trainer_profiles;
+      const latestFee = Number((feeRes?.data as any)?.monthly_trainer_fee) || Number(aData.monthly_fee_at_assignment) || 500;
+      trainerArrangement = {
+        assignmentId: aData.id,
+        trainerId: aData.trainer_id,
+        trainerName: tp ? `${tp.first_name || ""} ${tp.last_name || ""}`.trim() || "Trainer" : "Personal Trainer",
+        specialization: tp?.specialization || "Fitness Coach",
+        monthlyTrainerFee: latestFee,
+      };
     }
 
     // Map Current Membership
@@ -206,6 +255,7 @@ export async function fetchRegularRenewalData(
         customer,
         currentMembership,
         availablePlans,
+        trainerArrangement,
       },
     };
   } catch (err: any) {
@@ -268,6 +318,7 @@ export interface SubmitRegularRenewalProofParams {
   plan: RegularRenewalPlan;
   paymentMethod: "telebirr" | "cbe_birr";
   file: File;
+  trainerArrangement?: ActiveTrainerArrangement | null;
 }
 
 export interface SubmitRegularRenewalProofResult {
@@ -283,7 +334,7 @@ export interface SubmitRegularRenewalProofResult {
 export async function submitRegularRenewalProof(
   params: SubmitRegularRenewalProofParams
 ): Promise<SubmitRegularRenewalProofResult> {
-  const { customerId, membershipId, plan, paymentMethod, file } = params;
+  const { customerId, membershipId, plan, paymentMethod, file, trainerArrangement } = params;
 
   // 1. Pre-upload file validation
   const validation = validateProofFile(file);
@@ -347,16 +398,25 @@ export async function submitRegularRenewalProof(
       return { success: true, paymentId: result?.payment_id, filePath: result?.proof_path || storagePath };
     }
 
-    // 4. Record pending payment request in Supabase 'payments' table
+    // 4. Calculate total amount including monthly trainer fee if customer has active trainer arrangement
+    const trainerFee = trainerArrangement ? Number(trainerArrangement.monthlyTrainerFee) || 0 : 0;
+    const trainerId = trainerArrangement ? trainerArrangement.trainerId : null;
+    const totalAmount = Number(plan.price) + trainerFee;
+
     const dbPaymentMethod = paymentMethod === "cbe_birr" ? "CBE_BIRR" : "TELEBIRR";
-    const notes = `${params.category || "Regular"} renewal request for plan: ${plan.name} (${plan.id}). Payment proof uploaded, awaiting reception verification.`;
+    const trainerNote = trainerArrangement
+      ? ` + Personal Trainer (Coach ${trainerArrangement.trainerName}: ${trainerFee} ETB). Total renewal amount: ${totalAmount} ETB.`
+      : "";
+    const notes = `${params.category || "Regular"} renewal request for plan: ${plan.name} (${plan.id}).${trainerNote} Payment proof uploaded, awaiting reception verification.`;
 
     const { data: paymentRow, error: paymentError } = await (supabase
       .from("payments") as any)
       .insert({
         customer_id: customerId,
         membership_id: membershipId || null,
-        amount: plan.price,
+        amount: totalAmount,
+        trainer_fee: trainerFee,
+        trainer_id: trainerId,
         payment_method: dbPaymentMethod,
         payment_status: "PENDING",
         transaction_reference: storagePath,

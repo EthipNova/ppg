@@ -12,12 +12,10 @@ import {
   Flame,
   Lockers,
   Info,
-  ArrowRight,
   ShieldCheck,
 } from "@phosphor-icons/react";
 import {
   useGym,
-  useT,
   computeMemberStatus,
   evaluateAccess,
   dayName,
@@ -115,14 +113,10 @@ const FACILITIES = [
 export default function RegularCustomerDashboard({
   member,
   membershipSummary,
-  attendance,
-  payments,
-  onRenew,
 }: RegularCustomerDashboardProps) {
   const { state } = useGym();
-  const t = useT();
 
-  const now = new Date();
+  const now = useMemo(() => new Date(), []);
   const hasNoMembership = membershipSummary
     ? membershipSummary.status === "none"
     : !member.planId;
@@ -260,18 +254,12 @@ export default function RegularCustomerDashboard({
               </div>
               <h3 className="text-xl font-black text-white">No Active Membership</h3>
               <p className="text-zinc-400 text-sm mt-1 max-w-xl">
-                You do not currently have an active regular gym membership. Access to the training floor and club facilities requires a valid membership plan.
+                You do not currently have an active regular gym membership. Please visit Reception to choose a plan and activate your membership.
               </p>
             </div>
-            {onRenew && (
-              <button
-                onClick={onRenew}
-                className="bg-lime-400 hover:bg-lime-300 text-zinc-950 px-5 py-2.5 rounded-xl font-bold text-sm transition-colors active:scale-[0.98] inline-flex items-center justify-center gap-2 shrink-0 self-start sm:self-center"
-              >
-                <span>Purchase Membership</span>
-                <ArrowRight weight="bold" className="w-4 h-4" />
-              </button>
-            )}
+            <div className="bg-zinc-800/80 border border-zinc-700 rounded-xl px-4 py-2.5 text-xs text-zinc-300 font-semibold self-start sm:self-center">
+              Visit Reception to activate
+            </div>
           </div>
         ) : isExpired ? (
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-5">
@@ -280,22 +268,14 @@ export default function RegularCustomerDashboard({
                 <XCircle weight="fill" className="w-3.5 h-3.5" />
                 MEMBERSHIP EXPIRED
               </div>
-              <h3 className="text-xl font-black text-white">Access Temporarily Paused</h3>
-              <p className="text-zinc-400 text-sm mt-1 max-w-xl">
-                Your regular gym membership expired on{" "}
-                <span className="text-white font-semibold">{member.expiryDate}</span>. Access to
-                the training floor and facilities is paused until your membership is renewed.
+              <h3 className="text-xl font-black text-white">Membership Expired</h3>
+              <p className="text-red-200/90 text-sm mt-1 max-w-xl font-medium">
+                Your membership has expired. Please visit Reception to renew your membership.
               </p>
             </div>
-            {onRenew && (
-              <button
-                onClick={onRenew}
-                className="bg-red-500 hover:bg-red-400 text-white px-5 py-2.5 rounded-xl font-bold text-sm transition-colors active:scale-[0.98] inline-flex items-center justify-center gap-2 shrink-0 self-start sm:self-center"
-              >
-                <span>Renew Membership</span>
-                <ArrowRight weight="bold" className="w-4 h-4" />
-              </button>
-            )}
+            <div className="bg-red-400/10 border border-red-400/30 text-red-300 rounded-xl px-4 py-2.5 text-xs font-semibold self-start sm:self-center">
+              Renewal managed at Reception
+            </div>
           </div>
         ) : accessDecision.allowed ? (
           /* Case B: Active + Currently Allowed */

@@ -78,8 +78,18 @@ export async function fetchPayments({ search, status, method, page }: { search: 
   }
 
   let query = supabase.from("payments").select(PAYMENT_FIELDS, { count: "exact" }).order("paid_at", { ascending: false, nullsFirst: false }).order("created_at", { ascending: false }).range(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE - 1);
-  if (status !== "all") query = query.eq("payment_status", status);
-  if (method !== "all") query = query.eq("payment_method", method);
+  if (status !== "all") query = query.ilike("payment_status", status);
+  if (method !== "all") {
+    if (method.toUpperCase() === "CASH") {
+      query = query.ilike("payment_method", "cash");
+    } else if (method.toUpperCase() === "TELEBIRR") {
+      query = query.ilike("payment_method", "telebirr");
+    } else if (method.toUpperCase() === "CBE_BIRR") {
+      query = query.or("payment_method.eq.CBE_BIRR,payment_method.ilike.%cbe%");
+    } else {
+      query = query.eq("payment_method", method);
+    }
+  }
   if (matchingCustomerIds && matchingPaymentIds) {
     const searchClauses = [];
     if (matchingCustomerIds.length > 0) searchClauses.push(`customer_id.in.(${matchingCustomerIds.join(",")})`);

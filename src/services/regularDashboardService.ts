@@ -11,6 +11,8 @@ export interface RegularCustomerData {
   joinDate: string;
   phone: string;
   email: string | null;
+  gender?: string | null;
+  photoUrl?: string | null;
 }
 
 export interface RegularPlanData {
@@ -104,6 +106,8 @@ interface CustomerDbRow {
   join_date: string;
   phone: string;
   email: string | null;
+  gender?: string | null;
+  photo_url?: string | null;
 }
 
 interface AttendanceDbRow {
@@ -152,7 +156,7 @@ export async function fetchRegularDashboardData(
     // 1. Fetch Customer Record
     const customerRes = await supabase
       .from("customers")
-      .select("id, customer_code, first_name, last_name, customer_type, status, join_date, phone, email")
+      .select("id, customer_code, first_name, last_name, customer_type, status, join_date, phone, email, gender, photo_url")
       .eq("id", customerId)
       .maybeSingle();
 
@@ -183,6 +187,8 @@ export async function fetchRegularDashboardData(
       joinDate: customerRow.join_date,
       phone: customerRow.phone,
       email: customerRow.email ?? null,
+      gender: customerRow.gender ?? null,
+      photoUrl: customerRow.photo_url ?? null,
     };
 
     // 2. Parallel Secondary Queries: Membership (joined with plan), Attendance, Payments

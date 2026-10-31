@@ -1,231 +1,453 @@
 import { supabase } from "../integrations/supabase/client";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-// These feature tables and RPCs are introduced by the accompanying unapplied SQL migration.
+// Cast to SupabaseClient for newly added tables and RPCs
 const steamDb = supabase as unknown as SupabaseClient;
-
-export interface SteamServiceOffering {
-  id: string;
-  name: string;
-  description: string;
-  price: number;
-  active: boolean;
-  accessType: "package" | "per-visit";
-  durationDays: number;
-  usageLimit: number | null;
-  trackUsage: boolean;
-}
-
-export interface SteamEntitlementRow {
-  id: string;
-  customerId: string;
-  customerName: string;
-  serviceId: string | null;
-  serviceName: string;
-  price: number;
-  currency: string;
-  paymentId: string | null;
-  paymentStatus: string;
-  paymentMethod: string;
-  purchaseDate: string;
-  startDate: string;
-  endDate: string;
-  status: string;
-  usageCount: number;
-  usageLimit: number | null;
-  trackUsage: boolean;
-}
 
 export interface SteamCustomerOption {
   id: string;
   name: string;
   code: string;
   phone: string | null;
+  category: string;
 }
 
-export interface PendingSteamPayment {
+export interface SteamServiceOffering {
   id: string;
+  name: string;
+  price: number;
+  description: string | null;
+  active: boolean;
+}
+
+export interface SteamServiceRecord {
+  id: string;
+  customer_id: string;
+  customer_name: string;
+  customer_code: string;
+  customer_phone: string | null;
+  customer_category: string;
+  service_id: string | null;
+  service_name: string;
+  amount: number;
+  payment_method: string;
+  payment_reference: string | null;
+  payment_proof_path: string;
+  payment_status: "PENDING_VERIFICATION" | "APPROVED" | "REJECTED";
+  service_status: "AWAITING_VERIFICATION" | "READY_FOR_ACCESS" | "AUTHORIZED" | "COMPLETED" | "CANCELLED";
+  registered_by: string | null;
+  registered_by_email: string | null;
+  verified_by: string | null;
+  verified_by_email: string | null;
+  verified_at: string | null;
+  rejection_reason: string | null;
+  authorized_by: string | null;
+  authorized_at: string | null;
+  completed_by: string | null;
+  completed_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SteamSummaryStats {
+  today_services: number;
+  pending_payments: number;
+  approved_payments: number;
+  in_progress_services?: number;
+  completed_services: number;
+  today_revenue: number;
+}
+
+export interface RegisterSteamInput {
   customerId: string;
-  customerName: string;
-  serviceName: string;
+  serviceId?: string | null;
   amount: number;
   paymentMethod: string;
-  createdAt: string;
+  paymentReference?: string;
+  proofFile?: File | null;
+  authorizeImmediately?: boolean;
 }
 
-export async function fetchSteamServiceOfferings(): Promise<SteamServiceOffering[]> {
-  const optionsResult = await supabase
-    .from("steam_service_options")
-    .select("service_id, access_type, duration_days, usage_limit, track_usage");
-  if (optionsResult.error) throw new Error(`Unable to load Steam offerings: ${optionsResult.error.message}`);
-  const options = optionsResult.data ?? [];
-  if (options.length === 0) return [];
+const MAX_PROOF_SIZE_BYTES = 5 * 1024 * 1024; // 5MB
+const ALLOWED_MIME_TYPES = ["image/jpeg", "image/png", "image/webp"];
 
-  const serviceResult = await supabase
-    .from("services")
-    .select("id, name, description, price, is_active")
-    .in("id", options.map(option => option.service_id));
-  if (serviceResult.error) throw new Error(`Unable to load Steam service details: ${serviceResult.error.message}`);
-  const services = new Map((serviceResult.data ?? []).map(service => [service.id, service]));
-  return options.flatMap(option => {
-    const service = services.get(option.service_id);
-    if (!service) return [];
-    return [{
-      id: service.id,
-      name: service.name,
-      description: service.description ?? "",
-      price: Number(service.price),
-      active: Boolean(service.is_active),
-      accessType: option.access_type as SteamServiceOffering["accessType"],
-      durationDays: Number(option.duration_days),
-      usageLimit: option.usage_limit === null ? null : Number(option.usage_limit),
-      trackUsage: Boolean(option.track_usage),
-    }];
-  });
-}
+/**
+ * Searches customers for Steam registration by Name, Member ID (customer_code), or Phone.
+ */
+export async function searchCustomersForSteam(query: string): Promise<SteamCustomerOption[]> {
+  const clean = query.trim();
+  if (clean.length < 2) return [];
 
-export async function searchSteamCustomers(search: string): Promise<SteamCustomerOption[]> {
-  const query = search.trim().replace(/[,%()]/g, " ");
-  if (query.length < 2) return [];
-  const { data, error } = await steamDb.from("customers")
-    .select("id, customer_code, first_name, last_name, phone")
-    .or(`first_name.ilike.%${query}%,last_name.ilike.%${query}%,customer_code.ilike.%${query}%,phone.ilike.%${query}%`)
-    .order("last_name")
-    .limit(15);
-  if (error) throw new Error(`Unable to search customers: ${error.message}`);
-  return (data ?? []).map(customer => ({
-    id: customer.id,
-    name: `${customer.first_name ?? ""} ${customer.last_name ?? ""}`.trim(),
-    code: customer.customer_code,
-    phone: customer.phone,
+  const { data, error } = await supabase
+    .from("customers")
+    .select("id, customer_code, first_name, last_name, phone, customer_type")
+    .or(`first_name.ilike.%${clean}%,last_name.ilike.%${clean}%,customer_code.ilike.%${clean}%,phone.ilike.%${clean}%`)
+    .order("customer_code", { ascending: true })
+    .limit(10);
+
+  if (error) {
+    console.error("searchCustomersForSteam error:", error);
+    throw new Error(`Unable to search customers: ${error.message}`);
+  }
+
+  return (data || []).map(c => ({
+    id: c.id,
+    name: `${c.first_name || ""} ${c.last_name || ""}`.trim() || "Customer",
+    code: c.customer_code || "—",
+    phone: c.phone || null,
+    category: c.customer_type || "REGULAR",
   }));
 }
 
-export async function fetchSteamEntitlements(): Promise<SteamEntitlementRow[]> {
-  const [accessResult, paymentResult] = await Promise.all([
-    steamDb.from("steam_access").select("id, customer_id, service_id, price, currency, payment_id, start_date, end_date, status, usage_count, usage_limit, track_usage, created_at, cancelled_at").order("created_at", { ascending: false }).limit(500),
-    steamDb.from("payments").select("id, customer_id, service_id, amount, payment_method, payment_status, paid_at, created_at").eq("service_type", "STEAM").order("created_at", { ascending: false }).limit(1000),
-  ]);
-  const error = accessResult.error ?? paymentResult.error;
-  if (error) throw new Error(`Unable to load Steam purchase history: ${error.message}`);
-  const accessRows = accessResult.data ?? [];
-  const paymentRows = paymentResult.data ?? [];
-  const customerIds = [...new Set([...accessRows.map(row => row.customer_id), ...paymentRows.map(row => row.customer_id)])];
-  const serviceIds = [...new Set([...accessRows.map(row => row.service_id), ...paymentRows.map(row => row.service_id)].filter((id): id is string => Boolean(id)))];
-  const [customersResult, servicesResult] = await Promise.all([
-    customerIds.length ? steamDb.from("customers").select("id, first_name, last_name").in("id", customerIds) : Promise.resolve({ data: [], error: null }),
-    serviceIds.length ? steamDb.from("services").select("id, name").in("id", serviceIds) : Promise.resolve({ data: [], error: null }),
-  ]);
-  const relatedError = customersResult.error ?? servicesResult.error;
-  if (relatedError) throw new Error(`Unable to load Steam purchase details: ${relatedError.message}`);
-  const customers = new Map((customersResult.data ?? []).map(customer => [customer.id, `${customer.first_name ?? ""} ${customer.last_name ?? ""}`.trim()]));
-  const services = new Map((servicesResult.data ?? []).map(service => [service.id, service.name]));
-  const payments = new Map(paymentRows.map(payment => [payment.id, payment]));
-  return accessRows.map(row => {
-    const payment = row.payment_id ? payments.get(row.payment_id) : undefined;
-    const accessStatus = row.cancelled_at
-      ? "Cancelled"
-      : payment?.payment_status !== "PAID"
-        ? "Unpaid / pending"
-        : row.end_date < new Date().toISOString().slice(0, 10)
-          || (row.track_usage && row.usage_limit !== null && Number(row.usage_count) >= Number(row.usage_limit))
-            ? "Expired"
-            : row.status;
+/**
+ * Fetches the single active Steam/Sauna service configuration.
+ * Returns null if no Steam service is currently configured/active.
+ */
+export async function fetchActiveSteamService(): Promise<SteamServiceOffering | null> {
+  const { data, error } = await steamDb.rpc("get_active_steam_service");
+
+  if (error) {
+    console.warn("get_active_steam_service RPC error, falling back to query:", error);
+    const { data: qData, error: qError } = await steamDb
+      .from("services")
+      .select("id, name, price, description, is_active")
+      .eq("is_active", true)
+      .or("name.ilike.%steam%,name.ilike.%sauna%")
+      .limit(1)
+      .maybeSingle();
+
+    if (qError) {
+      console.error("fetchActiveSteamService query error:", qError);
+      return null;
+    }
+    if (!qData) return null;
+    const item = qData as { id: string; name: string; price: number; description: string | null; is_active: boolean };
     return {
-      id: row.id,
-      customerId: row.customer_id,
-      customerName: customers.get(row.customer_id) ?? "Customer",
-      serviceId: row.service_id,
-      serviceName: row.service_id ? services.get(row.service_id) ?? "Historical Steam service" : "Historical Steam service",
-      price: Number(row.price ?? payment?.amount ?? 0),
-      currency: row.currency ?? "ETB",
-      paymentId: row.payment_id,
-      paymentStatus: payment?.payment_status ?? "UNKNOWN",
-      paymentMethod: payment?.payment_method ?? "UNKNOWN",
-      purchaseDate: payment?.paid_at ?? payment?.created_at ?? row.created_at,
-      startDate: row.start_date,
-      endDate: row.end_date,
-      status: accessStatus,
-      usageCount: Number(row.usage_count ?? 0),
-      usageLimit: row.usage_limit === null ? null : Number(row.usage_limit),
-      trackUsage: Boolean(row.track_usage),
+      id: item.id,
+      name: item.name,
+      price: Number(item.price),
+      description: item.description,
+      active: Boolean(item.is_active),
     };
-  });
+  }
+
+  if (data && Array.isArray(data) && data.length > 0) {
+    const s = data[0];
+    return {
+      id: s.id,
+      name: s.name,
+      price: Number(s.price),
+      description: s.description,
+      active: Boolean(s.is_active),
+    };
+  }
+
+  return null;
 }
 
-export async function fetchPendingSteamPayments(): Promise<PendingSteamPayment[]> {
-  const { data, error } = await steamDb.from("payments")
-    .select("id, customer_id, service_id, amount, payment_method, created_at")
-    .eq("service_type", "STEAM").eq("payment_status", "PENDING")
-    .order("created_at", { ascending: true }).limit(200);
-  if (error) throw new Error(`Unable to load pending Steam payments: ${error.message}`);
-  const payments = data ?? [];
-  if (!payments.length) return [];
-  const customerIds = [...new Set(payments.map(row => row.customer_id))];
-  const serviceIds = [...new Set(payments.map(row => row.service_id).filter((id): id is string => Boolean(id)))];
-  const [customersResult, servicesResult] = await Promise.all([
-    steamDb.from("customers").select("id, first_name, last_name").in("id", customerIds),
-    serviceIds.length ? steamDb.from("services").select("id, name").in("id", serviceIds) : Promise.resolve({ data: [], error: null }),
-  ]);
-  const relatedError = customersResult.error ?? servicesResult.error;
-  if (relatedError) throw new Error(`Unable to load Steam payment details: ${relatedError.message}`);
-  const customers = new Map((customersResult.data ?? []).map(customer => [customer.id, `${customer.first_name ?? ""} ${customer.last_name ?? ""}`.trim()]));
-  const services = new Map((servicesResult.data ?? []).map(service => [service.id, service.name]));
-  return payments.map(row => ({
+/**
+ * Saves (adds or edits) the single Steam service price (Admin only).
+ */
+export async function saveSteamServiceConfig(price: number): Promise<SteamServiceOffering> {
+  const priceNum = Number(price);
+  if (isNaN(priceNum) || priceNum <= 0) {
+    throw new Error("Steam service price must be a valid positive amount greater than 0.");
+  }
+
+  const { data, error } = await steamDb.rpc("save_steam_service_config", {
+    p_price: priceNum,
+  });
+
+  if (error) {
+    console.error("save_steam_service_config RPC error:", error);
+    throw new Error(error.message || "Failed to save Steam service configuration.");
+  }
+
+  const row = Array.isArray(data) ? data[0] : data;
+  return {
     id: row.id,
-    customerId: row.customer_id,
-    customerName: customers.get(row.customer_id) ?? "Customer",
-    serviceName: row.service_id ? services.get(row.service_id) ?? "Historical Steam service" : "Steam service",
-    amount: Number(row.amount),
-    paymentMethod: row.payment_method ?? "UNKNOWN",
-    createdAt: row.created_at,
-  }));
+    name: row.name,
+    price: Number(row.price),
+    description: "Official PowerPlus Gym Steam & Sauna Session Pass",
+    active: Boolean(row.is_active),
+  };
 }
 
-export async function saveSteamOffering(input: Omit<SteamServiceOffering, "active"> & { active: boolean }): Promise<void> {
-  const { error } = await steamDb.rpc("save_steam_service", {
-    p_service_id: input.id || null,
-    p_name: input.name,
-    p_description: input.description,
-    p_price: input.price,
-    p_access_type: input.accessType,
-    p_duration_days: input.durationDays,
-    p_usage_limit: input.usageLimit,
-    p_track_usage: input.trackUsage,
-    p_is_active: input.active,
-  });
-  if (error) throw new Error(`Unable to save Steam service: ${error.message}`);
+/**
+ * Deletes (deactivates) the single Steam service configuration (Admin only).
+ * Disables new Steam registrations while completely preserving all historical transactions.
+ */
+export async function deleteSteamServiceConfig(): Promise<void> {
+  const { error } = await steamDb.rpc("delete_steam_service_config");
+
+  if (error) {
+    console.error("delete_steam_service_config RPC error:", error);
+    throw new Error(error.message || "Failed to delete Steam service configuration.");
+  }
 }
 
-export async function purchaseSteamWithCash(customerId: string, serviceId: string, idempotencyKey: string): Promise<void> {
-  const { error } = await steamDb.rpc("purchase_steam_cash", {
-    p_customer_id: customerId,
+/**
+ * Loads configurable steam services from public.services.
+ */
+export async function fetchSteamOfferings(): Promise<SteamServiceOffering[]> {
+  const single = await fetchActiveSteamService();
+  return single ? [single] : [];
+}
+
+/**
+ * Updates or creates a Steam service offering (Admin only).
+ */
+export async function saveSteamOffering(
+  offering: { id?: string; name: string; price: number; description?: string; active: boolean }
+): Promise<void> {
+  await saveSteamServiceConfig(offering.price);
+}
+
+
+/**
+ * Uploads a payment proof photo to private storage bucket 'payment-proofs'.
+ */
+export async function uploadSteamPaymentProof(file: File, customerId: string): Promise<string> {
+  if (!ALLOWED_MIME_TYPES.includes(file.type)) {
+    throw new Error("Invalid file type. Please upload a JPEG, PNG, or WEBP image.");
+  }
+  if (file.size > MAX_PROOF_SIZE_BYTES) {
+    throw new Error("Image file is too large. Maximum allowed size is 5MB.");
+  }
+
+  const ext = file.name.split(".").pop()?.toLowerCase() || "jpg";
+  const uniqueName = `steam-proofs/${Date.now()}_${customerId.slice(0, 8)}_${Math.random().toString(36).substring(2, 8)}.${ext}`;
+
+  const { data, error } = await supabase.storage
+    .from("payment-proofs")
+    .upload(uniqueName, file, {
+      cacheControl: "3600",
+      upsert: false,
+      contentType: file.type,
+    });
+
+  if (error || !data?.path) {
+    console.error("Proof upload error:", error);
+    throw new Error(`Failed to upload payment proof photo: ${error?.message || "Unknown error"}`);
+  }
+
+  return data.path;
+}
+
+/**
+ * Generates an authenticated, short-lived signed URL to view private payment proof photo.
+ */
+export async function getSteamProofSignedUrl(path: string): Promise<string> {
+  const { data, error } = await supabase.storage
+    .from("payment-proofs")
+    .createSignedUrl(path, 3600); // 1 hour validity
+
+  if (error || !data?.signedUrl) {
+    console.error("Signed URL error:", error);
+    throw new Error(`Unable to generate secure view link: ${error?.message || "Not found"}`);
+  }
+
+  return data.signedUrl;
+}
+
+/**
+ * Reception registers a Steam service with customer, payment, and optional uploaded proof.
+ * Cash payments require no photo upload and store NULL proof path.
+ * Electronic payments (Telebirr, CBE Birr) require photo upload.
+ */
+export async function registerSteamService(input: RegisterSteamInput): Promise<string> {
+  if (!input.customerId) {
+    throw new Error("Please select a customer.");
+  }
+  if (!input.amount || input.amount <= 0) {
+    throw new Error("Please enter a valid positive service price.");
+  }
+  if (!input.paymentMethod) {
+    throw new Error("Please select a payment method.");
+  }
+
+  const normalizedMethod = input.paymentMethod.toUpperCase().trim();
+  if (!["CASH", "TELEBIRR", "CBE_BIRR"].includes(normalizedMethod)) {
+    throw new Error("Invalid payment method. Only Cash, Telebirr, and CBE Birr are supported.");
+  }
+
+  let proofPath: string | null = null;
+
+  // If electronic payment method, validate and upload proof photo
+  if (normalizedMethod !== "CASH") {
+    if (!input.proofFile) {
+      throw new Error(`Payment screenshot or photo is required for ${input.paymentMethod}.`);
+    }
+    proofPath = await uploadSteamPaymentProof(input.proofFile, input.customerId);
+  }
+
+  // Call atomic registration RPC with immediate authorization support
+  const authorizeImmediately = input.authorizeImmediately ?? true;
+  let rpcData: unknown;
+  let rpcError: Error | { message: string } | null = null;
+
+  try {
+    const res = await steamDb.rpc("register_steam_service", {
+      p_customer_id: input.customerId,
+      p_service_id: input.serviceId || null,
+      p_amount: input.amount,
+      p_payment_method: normalizedMethod,
+      p_payment_reference: input.paymentReference?.trim() || null,
+      p_proof_path: proofPath,
+      p_authorize_immediately: authorizeImmediately,
+    });
+    if (res.error) {
+      rpcError = res.error;
+    } else {
+      rpcData = res.data;
+    }
+  } catch (err) {
+    rpcError = err instanceof Error ? err : new Error(String(err));
+  }
+
+  if (rpcError) {
+    console.error("registerSteamService RPC error:", rpcError);
+    // Best-effort cleanup of orphan uploaded file
+    if (proofPath) {
+      try {
+        await supabase.storage.from("payment-proofs").remove([proofPath]);
+      } catch {
+        // ignore cleanup errors
+      }
+    }
+    throw new Error(`Failed to register steam service: ${rpcError.message}`);
+  }
+
+  const result = rpcData as { success: boolean; steam_service_id: string };
+  return result.steam_service_id;
+}
+
+/**
+ * Admin verifies payment: approve or reject with reason.
+ */
+export async function verifySteamPayment(
+  serviceId: string,
+  approve: boolean,
+  reason?: string
+): Promise<void> {
+  if (!approve && (!reason || !reason.trim())) {
+    throw new Error("A rejection reason is required when rejecting a payment.");
+  }
+
+  const { error } = await steamDb.rpc("verify_steam_payment", {
     p_service_id: serviceId,
-    p_idempotency_key: idempotencyKey,
+    p_approve: approve,
+    p_reason: reason?.trim() || null,
   });
-  if (error) throw new Error(`Unable to process cash purchase: ${error.message}`);
+
+  if (error) {
+    console.error("verifySteamPayment error:", error);
+    throw new Error(`Payment verification failed: ${error.message}`);
+  }
 }
 
-export async function recordSteamCheckin(accessId: string): Promise<void> {
-  const { error } = await steamDb.rpc("record_steam_checkin", {
-    p_access_id: accessId,
-    p_request_id: crypto.randomUUID(),
-    p_note: "Reception steam check-in",
+/**
+ * Reception authorizes customer to access the steam room after Admin approval.
+ */
+export async function authorizeSteamAccess(serviceId: string): Promise<void> {
+  const { error } = await steamDb.rpc("authorize_steam_access", {
+    p_service_id: serviceId,
   });
-  if (error) throw new Error(`Steam check-in denied: ${error.message}`);
+
+  if (error) {
+    console.error("authorizeSteamAccess error:", error);
+    throw new Error(`Failed to authorize steam access: ${error.message}`);
+  }
 }
 
-export async function cancelSteamEntitlement(accessId: string, reason: string): Promise<void> {
-  const { error } = await steamDb.rpc("cancel_steam_access", { p_access_id: accessId, p_reason: reason });
-  if (error) throw new Error(`Unable to cancel Steam access: ${error.message}`);
+/**
+ * Reception marks customer steam room usage completed.
+ */
+export async function completeSteamService(serviceId: string): Promise<void> {
+  const { error } = await steamDb.rpc("complete_steam_service", {
+    p_service_id: serviceId,
+  });
+
+  if (error) {
+    console.error("completeSteamService error:", error);
+    throw new Error(`Failed to complete steam service: ${error.message}`);
+  }
 }
 
-export async function approveSteamPayment(paymentId: string): Promise<void> {
-  const { error } = await steamDb.rpc("approve_steam_payment", { p_payment_id: paymentId });
-  if (error) throw new Error(`Unable to verify Steam payment: ${error.message}`);
+/**
+ * Fetches summary statistics for the Reception & Admin dashboard cards.
+ */
+export async function fetchSteamSummaryStats(): Promise<SteamSummaryStats> {
+  const { data, error } = await steamDb.rpc("get_steam_summary_stats");
+
+  if (error) {
+    console.error("fetchSteamSummaryStats error:", error);
+    throw new Error(`Failed to load Steam summary stats: ${error.message}`);
+  }
+
+  const raw = data as {
+    today_services?: number;
+    pending_payments?: number;
+    approved_payments?: number;
+    in_progress_services?: number;
+    completed_services?: number;
+    today_revenue?: number;
+  };
+
+  return {
+    today_services: Number(raw?.today_services || 0),
+    pending_payments: Number(raw?.pending_payments || 0),
+    approved_payments: Number(raw?.approved_payments || 0),
+    in_progress_services: Number(raw?.in_progress_services || 0),
+    completed_services: Number(raw?.completed_services || 0),
+    today_revenue: Number(raw?.today_revenue || 0),
+  };
 }
 
-export async function rejectSteamPayment(paymentId: string, reason: string): Promise<void> {
-  const { error } = await steamDb.rpc("reject_steam_payment", { p_payment_id: paymentId, p_reason: reason });
-  if (error) throw new Error(`Unable to reject Steam payment: ${error.message}`);
+/**
+ * Fetches steam services list filtered by tab (ALL, PENDING, APPROVED, IN_PROGRESS, COMPLETED) and optional search term.
+ */
+export async function fetchSteamServicesList(
+  tab: "ALL" | "PENDING" | "APPROVED" | "IN_PROGRESS" | "COMPLETED" = "ALL",
+  search?: string
+): Promise<SteamServiceRecord[]> {
+  const { data, error } = await steamDb.rpc("get_steam_services_list", {
+    p_tab: tab,
+    p_status: tab,
+    p_search: search?.trim() || null,
+  });
+
+  if (error) {
+    console.error("fetchSteamServicesList error:", error);
+    throw new Error(`Failed to load steam services: ${error.message}`);
+  }
+
+  return (data || []).map((row: Record<string, unknown>) => ({
+    id: String(row.id),
+    customer_id: String(row.customer_id),
+    customer_name: String(row.customer_name || "Customer"),
+    customer_code: String(row.customer_code || "—"),
+    customer_phone: row.customer_phone ? String(row.customer_phone) : null,
+    customer_category: String(row.customer_category || "REGULAR"),
+    service_id: row.service_id ? String(row.service_id) : null,
+    service_name: String(row.service_name || "Steam Room Pass"),
+    amount: Number(row.amount || 0),
+    payment_method: String(row.payment_method || "CASH"),
+    payment_reference: row.payment_reference ? String(row.payment_reference) : null,
+    payment_proof_path: String(row.payment_proof_path),
+    payment_status: row.payment_status as SteamServiceRecord["payment_status"],
+    service_status: row.service_status as SteamServiceRecord["service_status"],
+    registered_by: row.registered_by ? String(row.registered_by) : null,
+    registered_by_email: row.registered_by_email ? String(row.registered_by_email) : null,
+    verified_by: row.verified_by ? String(row.verified_by) : null,
+    verified_by_email: row.verified_by_email ? String(row.verified_by_email) : null,
+    verified_at: row.verified_at ? String(row.verified_at) : null,
+    rejection_reason: row.rejection_reason ? String(row.rejection_reason) : null,
+    authorized_by: row.authorized_by ? String(row.authorized_by) : null,
+    authorized_at: row.authorized_at ? String(row.authorized_at) : null,
+    completed_by: row.completed_by ? String(row.completed_by) : null,
+    completed_at: row.completed_at ? String(row.completed_at) : null,
+    created_at: String(row.created_at),
+    updated_at: String(row.updated_at),
+  }));
 }
