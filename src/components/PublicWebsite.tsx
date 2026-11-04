@@ -329,7 +329,7 @@ export default function PublicWebsite({
         <div className="max-w-7xl mx-auto text-center relative z-10">
           <motion.div initial={{ opacity: 0, y: 30 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.7 }}>
             <span className="inline-flex items-center gap-2 bg-lime-400/10 border border-lime-400/20 rounded-full px-4 py-1.5 text-lime-400 text-xs sm:text-sm font-medium mb-6">
-              <Lightning weight="fill" className="w-4 h-4" /> Addis Ababa's #1 gym
+              <Lightning weight="fill" className="w-4 h-4" /> Hawassa
             </span>
             <h1 className="text-4xl sm:text-6xl md:text-7xl font-black uppercase tracking-tighter leading-none mb-4">
               {state.settings.tagline ? (
