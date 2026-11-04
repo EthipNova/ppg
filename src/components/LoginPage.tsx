@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { useLocation } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Barbell,
@@ -29,6 +30,7 @@ interface LoginPageProps {
 
 export default function LoginPage({ onBackToWebsite, onLoginSuccess }: LoginPageProps) {
   const { state, dispatch } = useGym();
+  const location = useLocation();
   const [identifier, setIdentifier] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -39,6 +41,21 @@ export default function LoginPage({ onBackToWebsite, onLoginSuccess }: LoginPage
   const [forgotEmail, setForgotEmail] = useState("");
   const [isForgotLoading, setIsForgotLoading] = useState(false);
   const [forgotStatus, setForgotStatus] = useState<{ type: "success" | "error"; message: string } | null>(null);
+
+  const handleCloseForgotModal = () => {
+    setShowForgotModal(false);
+    setForgotStatus(null);
+    if (typeof window !== "undefined" && window.location.search.includes("forgot=true")) {
+      window.history.replaceState(null, "", "/login");
+    }
+  };
+
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    if (params.get("forgot") === "true") {
+      setShowForgotModal(true);
+    }
+  }, [location.search]);
 
   // Set New Password (Recovery) modal state
   const [showResetModal, setShowResetModal] = useState(false);
@@ -51,15 +68,20 @@ export default function LoginPage({ onBackToWebsite, onLoginSuccess }: LoginPage
   useEffect(() => {
     // Check if user landed from password recovery email (hash contains access_token / type=recovery)
     const hash = typeof window !== "undefined" ? window.location.hash : "";
-    if (hash && (hash.includes("type=recovery") || hash.includes("access_token"))) {
-      console.log("[Auth-Diag] Detected password recovery token in URL hash");
-      setShowResetModal(true);
+    const search = typeof window !== "undefined" ? window.location.search : "";
+    if (
+      (hash && (hash.includes("type=recovery") || hash.includes("access_token"))) ||
+      (search && (search.includes("type=recovery") || search.includes("code=")))
+    ) {
+      console.log("[Auth-Diag] Detected password recovery token in URL, forwarding to /reset-password");
+      window.location.href = `/reset-password${window.location.search}${window.location.hash}`;
+      return;
     }
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event) => {
       if (event === "PASSWORD_RECOVERY") {
-        console.log("[Auth-Diag] Detected PASSWORD_RECOVERY auth event");
-        setShowResetModal(true);
+        console.log("[Auth-Diag] Detected PASSWORD_RECOVERY auth event, forwarding to /reset-password");
+        window.location.href = `/reset-password${window.location.search}${window.location.hash}`;
       }
     });
 
@@ -114,12 +136,12 @@ export default function LoginPage({ onBackToWebsite, onLoginSuccess }: LoginPage
 
     try {
       if (!isEmail) {
-        // Resolve Staff Login ID (e.g. REC-101, TRN-101) to associated auth email
+        // Resolve Login ID (e.g. P-0001, TRN-101, REC-101) to associated auth email
         const resolved = await resolveLoginIdentifier(trimmedId);
         if (!resolved?.email) {
           setErrors((prev) => ({
             ...prev,
-            identifier: "No active account found for this Staff Login ID. Please verify your credentials.",
+            identifier: "No active account found for this Login ID. Please verify your credentials or speak with Reception.",
           }));
           setIsSubmitting(false);
           return;
@@ -161,22 +183,37 @@ export default function LoginPage({ onBackToWebsite, onLoginSuccess }: LoginPage
           : "";
         let alertTitle = "Authentication Failed";
         let userMessage = error.message || "Authentication failed. Please check your credentials.";
+        let httpStatus = error.status || 400;
 
-        if (error.status === 429 || msg.includes("rate limit") || msg.includes("too many requests")) {
+        if (
+          msg.includes("invalid login credentials") ||
+          errorCode === "invalid_credentials" ||
+          msg.includes("invalid email or password") ||
+          msg.includes("invalid credentials")
+        ) {
+          alertTitle = "Invalid Credentials";
+          userMessage = "Invalid Login ID or Password. Please verify your credentials and try again.";
+          httpStatus = 401;
+        } else if (error.status === 429 || msg.includes("rate limit") || msg.includes("too many requests")) {
           alertTitle = "Too Many Attempts";
           userMessage = "Too many failed attempts. Please wait a few moments before trying again.";
+          httpStatus = 429;
         } else if (msg.includes("email not confirmed") || errorCode === "email_not_confirmed") {
           alertTitle = "Email Not Confirmed";
-          userMessage = "Your email address has not been confirmed yet. Please verify your email using the link sent to your inbox before signing in.";
-        } else if (msg.includes("invalid login credentials") || errorCode === "invalid_credentials" || msg.includes("invalid email or password")) {
-          alertTitle = "Authentication Failed";
-          userMessage = "Invalid email or password. Please verify your credentials and try again.";
-        } else if (msg.includes("user is disabled") || msg.includes("user disabled") || msg.includes("user blocked")) {
-          alertTitle = "Account Disabled";
-          userMessage = "Your account has been disabled. Please contact gym administration.";
+          userMessage = "Your email address has not been confirmed yet. Please verify your email before signing in.";
+          httpStatus = 403;
+        } else if (msg.includes("user is disabled") || msg.includes("user disabled") || msg.includes("user blocked") || msg.includes("inactive")) {
+          alertTitle = "Account Inactive";
+          userMessage = "Your account is currently inactive or disabled. Please contact reception or gym administration.";
+          httpStatus = 403;
+        } else if (error.status === 0 || msg.includes("fetch failed") || msg.includes("network")) {
+          alertTitle = "Service Unavailable";
+          userMessage = "Unable to connect to the authentication server. Please check your network connection and try again.";
+          httpStatus = 503;
         } else if (error.status && error.status >= 500) {
           alertTitle = "Service Unavailable";
           userMessage = "The sign-in service is temporarily unavailable. Please try again shortly.";
+          httpStatus = error.status;
         }
 
         setAuthAlert({
@@ -184,8 +221,8 @@ export default function LoginPage({ onBackToWebsite, onLoginSuccess }: LoginPage
           title: alertTitle,
           message: userMessage,
           stage: "Stage 2: Supabase Auth (GoTrue)",
-          code: errorCode || (error as unknown as { code?: string }).code || "invalid_credentials",
-          status: error.status || 400,
+          code: errorCode || (error as unknown as { code?: string }).code || (httpStatus === 401 ? "invalid_credentials" : "authentication_error"),
+          status: httpStatus,
         });
         return;
       }
@@ -288,8 +325,14 @@ export default function LoginPage({ onBackToWebsite, onLoginSuccess }: LoginPage
 
   const handleForgotSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const trimmed = forgotEmail.trim();
-    if (!trimmed) return;
+    const trimmed = forgotEmail.trim().toLowerCase();
+    if (!trimmed || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed)) {
+      setForgotStatus({
+        type: "error",
+        message: "Please enter a valid email address.",
+      });
+      return;
+    }
 
     setIsForgotLoading(true);
     setForgotStatus(null);
@@ -308,7 +351,7 @@ export default function LoginPage({ onBackToWebsite, onLoginSuccess }: LoginPage
       } else {
         setForgotStatus({
           type: "success",
-          message: "If an account is associated with this email address, password recovery instructions have been sent. Please check your inbox and spam folder.",
+          message: "If an account exists with this email address, a password reset link will be sent. Please check your inbox and spam folder.",
         });
       }
     } catch {
@@ -603,7 +646,7 @@ export default function LoginPage({ onBackToWebsite, onLoginSuccess }: LoginPage
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4"
-            onClick={() => setShowForgotModal(false)}
+            onClick={handleCloseForgotModal}
           >
             <motion.div
               initial={{ scale: 0.95, opacity: 0 }}
@@ -621,7 +664,7 @@ export default function LoginPage({ onBackToWebsite, onLoginSuccess }: LoginPage
                 </div>
                 <button
                   type="button"
-                  onClick={() => setShowForgotModal(false)}
+                  onClick={handleCloseForgotModal}
                   className="p-1 rounded-lg text-zinc-400 hover:text-white transition-colors"
                   aria-label="Close modal"
                 >
@@ -661,7 +704,7 @@ export default function LoginPage({ onBackToWebsite, onLoginSuccess }: LoginPage
                     <button
                       type="button"
                       disabled={isForgotLoading}
-                      onClick={() => setShowForgotModal(false)}
+                      onClick={handleCloseForgotModal}
                       className="flex-1 px-4 py-2.5 rounded-xl border border-zinc-800 text-zinc-300 hover:text-white hover:bg-zinc-800 transition-colors text-xs font-semibold disabled:opacity-50"
                     >
                       Cancel
@@ -674,10 +717,10 @@ export default function LoginPage({ onBackToWebsite, onLoginSuccess }: LoginPage
                       {isForgotLoading ? (
                         <>
                           <CircleNotch className="w-3.5 h-3.5 animate-spin" />
-                          <span>Sending...</span>
+                          <span>Sending Link...</span>
                         </>
                       ) : (
-                        <span>Send Instructions</span>
+                        <span>Send Reset Link</span>
                       )}
                     </button>
                   </div>
@@ -695,7 +738,7 @@ export default function LoginPage({ onBackToWebsite, onLoginSuccess }: LoginPage
                   </div>
                   <button
                     type="button"
-                    onClick={() => setShowForgotModal(false)}
+                    onClick={handleCloseForgotModal}
                     className="w-full bg-zinc-800 hover:bg-zinc-700 text-white py-2.5 rounded-xl text-xs font-bold transition-colors"
                   >
                     Close

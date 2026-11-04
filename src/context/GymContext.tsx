@@ -1,10 +1,11 @@
 import { createContext, useContext, useReducer, useEffect, type ReactNode } from "react";
 import type { Member, Plan, Payment, Expense, Visit, EmailLog, StaffUser, GymSettings, AuditLog, AuthUser, MemberStatus, Trainer, GymClass, ClassAttendee, TrainerClientNote, CustomerCategory, AccessRule, AerobicsGroup, CategoryLabel, AccessDecision, SteamAccess, SteamUsage, SteamStatus, SteamType, Language, Locker, LockerAssignment } from "../types";
-import { MEMBERS, PAYMENTS, EXPENSES, VISITS, EMAIL_LOGS, STAFF, DEFAULT_SETTINGS, AUDIT_LOGS, TRAINERS, CLASSES, CLASS_ATTENDEES, TRAINER_CLIENT_NOTES, ACCESS_RULES, AEROBICS_GROUPS, WEEK_DAYS, ALL_DAYS, STEAM_ACCESS, STEAM_USAGE, LOCKERS, LOCKER_ASSIGNMENTS } from "../constants";
+import { MEMBERS, PAYMENTS, EXPENSES, VISITS, EMAIL_LOGS, STAFF, AUDIT_LOGS, TRAINERS, CLASSES, CLASS_ATTENDEES, TRAINER_CLIENT_NOTES, ACCESS_RULES, AEROBICS_GROUPS, WEEK_DAYS, ALL_DAYS, STEAM_ACCESS, STEAM_USAGE, LOCKERS, LOCKER_ASSIGNMENTS } from "../constants";
 import { DEFAULT_LANGUAGE, translate } from "../i18n/translations";
 import { getCurrentSession, subscribeToAuthChanges, resolveTrustedUserRole, signOutUser } from "../services/auth";
 import { getLocalCategories, saveLocalCategories, fetchCategories } from "../services/categories";
 import { getLocalPlans, saveLocalPlans, fetchPlans } from "../services/plans";
+import { getLocalGymSettings, saveLocalGymSettings, fetchGymSettings } from "../services/gymSettingsService";
 
 export interface State {
   members: Member[];
@@ -77,6 +78,16 @@ type Action =
   | { type: "ADD_LOCKER_ASSIGNMENT"; payload: LockerAssignment }
   | { type: "UPDATE_LOCKER_ASSIGNMENT"; payload: LockerAssignment };
 
+function getInitialLanguage(): Language {
+  if (typeof window !== "undefined") {
+    const saved = localStorage.getItem("powerplus_language");
+    if (saved === "en" || saved === "am" || saved === "sid") {
+      return saved;
+    }
+  }
+  return DEFAULT_LANGUAGE;
+}
+
 const initialState: State = {
   members: MEMBERS,
   plans: getLocalPlans(),
@@ -85,7 +96,7 @@ const initialState: State = {
   visits: VISITS,
   emailLogs: EMAIL_LOGS,
   staff: STAFF,
-  settings: DEFAULT_SETTINGS,
+  settings: getLocalGymSettings(),
   auditLogs: AUDIT_LOGS,
   trainers: TRAINERS,
   classes: CLASSES,
@@ -96,7 +107,7 @@ const initialState: State = {
   categoryLabels: getLocalCategories(),
   steamAccess: STEAM_ACCESS,
   steamUsage: STEAM_USAGE,
-  language: DEFAULT_LANGUAGE,
+  language: getInitialLanguage(),
   lockers: LOCKERS,
   lockerAssignments: LOCKER_ASSIGNMENTS,
   currentUser: null,
@@ -133,7 +144,10 @@ function reducer(state: State, action: Action): State {
     case "ADD_EXPENSE": return { ...state, expenses: [...state.expenses, action.payload] };
     case "ADD_VISIT": return { ...state, visits: [...state.visits, action.payload] };
     case "ADD_EMAIL_LOG": return { ...state, emailLogs: [...state.emailLogs, action.payload] };
-    case "UPDATE_SETTINGS": return { ...state, settings: action.payload };
+    case "UPDATE_SETTINGS": {
+      saveLocalGymSettings(action.payload);
+      return { ...state, settings: action.payload };
+    }
     case "ADD_AUDIT": return { ...state, auditLogs: [...state.auditLogs, action.payload] };
     case "ADD_STAFF": return { ...state, staff: [...state.staff, action.payload] };
     case "UPDATE_STAFF": return { ...state, staff: state.staff.map(s => s.id === action.payload.id ? action.payload : s) };
@@ -176,7 +190,16 @@ function reducer(state: State, action: Action): State {
     case "ADD_STEAM_ACCESS": return { ...state, steamAccess: [...state.steamAccess, action.payload] };
     case "UPDATE_STEAM_ACCESS": return { ...state, steamAccess: state.steamAccess.map(s => s.id === action.payload.id ? action.payload : s) };
     case "ADD_STEAM_USAGE": return { ...state, steamUsage: [action.payload, ...state.steamUsage] };
-    case "SET_LANGUAGE": return { ...state, language: action.payload };
+    case "SET_LANGUAGE": {
+      if (typeof window !== "undefined") {
+        try {
+          localStorage.setItem("powerplus_language", action.payload);
+        } catch (e) {
+          console.warn("Could not save language preference:", e);
+        }
+      }
+      return { ...state, language: action.payload };
+    }
     case "ADD_LOCKER": return { ...state, lockers: [...state.lockers, action.payload] };
     case "ADD_LOCKERS": return { ...state, lockers: [...state.lockers, ...action.payload] };
     case "UPDATE_LOCKER": return { ...state, lockers: state.lockers.map(l => l.id === action.payload.id ? action.payload : l) };
@@ -249,9 +272,10 @@ export function GymProvider({ children }: { children: ReactNode }) {
     let isMounted = true;
     async function loadData() {
       try {
-        const [cats, plns] = await Promise.all([
+        const [cats, plns, gymSettings] = await Promise.all([
           fetchCategories(),
-          fetchPlans(),
+          fetchPlans(undefined, true),
+          fetchGymSettings(),
         ]);
         if (isMounted) {
           if (cats && cats.length > 0) {
@@ -260,13 +284,33 @@ export function GymProvider({ children }: { children: ReactNode }) {
           if (plns && plns.length > 0) {
             dispatch({ type: "SET_PLANS", payload: plns });
           }
+          if (gymSettings) {
+            dispatch({ type: "UPDATE_SETTINGS", payload: gymSettings });
+          }
         }
       } catch (err) {
-        console.warn("Categories and plans live load note:", err);
+        console.warn("Categories, plans and settings live load note:", err);
       }
     }
     void loadData();
-    return () => { isMounted = false; };
+
+    const handleSettingsUpdated = (e: Event) => {
+      const custom = e as CustomEvent<GymSettings>;
+      if (custom.detail && isMounted) {
+        dispatch({ type: "UPDATE_SETTINGS", payload: custom.detail });
+      }
+    };
+
+    if (typeof window !== "undefined") {
+      window.addEventListener("powerplus:settings-updated", handleSettingsUpdated);
+    }
+
+    return () => {
+      isMounted = false;
+      if (typeof window !== "undefined") {
+        window.removeEventListener("powerplus:settings-updated", handleSettingsUpdated);
+      }
+    };
   }, []);
 
   return <GymContext.Provider value={{ state, dispatch }}>{children}</GymContext.Provider>;
@@ -397,15 +441,22 @@ export function categoryLabelOf(state: State, category: CustomerCategory): strin
   return state.categoryLabels.find(c => c.category === category)?.label ?? category;
 }
 
-export function planAppliesToCategory(plan: Plan, category: CustomerCategory): boolean {
+export function planAppliesToCategory(plan: Plan, category: CustomerCategory | string): boolean {
   const applicable = plan.applicableCategories;
-  return applicable === "ALL" || applicable.includes(category);
+  if (applicable === "ALL") return true;
+  if (Array.isArray(applicable)) {
+    return applicable.includes("ALL" as any) || applicable.includes(category as any);
+  }
+  return false;
 }
 
 export function planCategoryText(state: State, plan: Plan): string {
-  return plan.applicableCategories === "ALL"
-    ? "All categories"
-    : plan.applicableCategories.map(c => categoryLabelOf(state, c)).join(", ");
+  if (plan.applicableCategories === "ALL") return "All categories";
+  if (Array.isArray(plan.applicableCategories)) {
+    if (plan.applicableCategories.includes("ALL" as any)) return "All categories";
+    return plan.applicableCategories.map(c => categoryLabelOf(state, c)).join(", ");
+  }
+  return "All categories";
 }
 
 export function sendEmail(state: State, dispatch: React.Dispatch<Action>, to: string, toName: string, subject: string, body: string, type: EmailLog["type"]) {

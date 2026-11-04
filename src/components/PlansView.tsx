@@ -1,9 +1,9 @@
 import { useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { Lightning, PencilSimple, Plus } from "@phosphor-icons/react";
-import { useGym, formatETB, generateId, addAudit, planCategoryText } from "../context/GymContext";
+import { Lightning, PencilSimple, Plus, Trash } from "@phosphor-icons/react";
+import { useGym, formatETB, addAudit, planCategoryText } from "../context/GymContext";
 import type { CustomerCategory, Plan } from "../types";
-import { createPlan, updatePlan } from "../services/plans";
+import { createPlan, updatePlan, deletePlan } from "../services/plans";
 import { toast } from "sonner";
 
 const INPUT = "w-full bg-zinc-800 border border-zinc-700 rounded-xl px-4 py-2.5 text-white placeholder:text-zinc-500 focus:outline-none focus:border-lime-400/50";
@@ -77,15 +77,14 @@ export function PlansView() {
     try {
       if (editing) {
         const updated: Plan = { ...editing, ...base };
-        dispatch({ type: "UPDATE_PLAN", payload: updated });
         await updatePlan(updated);
+        dispatch({ type: "UPDATE_PLAN", payload: updated });
         addAudit(dispatch, "Plan updated", state.currentUser?.name || "Owner", `${updated.name} · ${formatETB(updated.price)} · ${planCategoryText(state, updated)}`);
         toast.success("Plan updated successfully");
       } else {
-        const planData: Plan = { ...base, id: generateId("p"), active: true };
-        dispatch({ type: "ADD_PLAN", payload: planData });
-        await createPlan(planData);
-        addAudit(dispatch, "Plan created", state.currentUser?.name || "Owner", `${planData.name} · ${formatETB(planData.price)} · ${planCategoryText(state, planData)}`);
+        const created = await createPlan(base);
+        dispatch({ type: "ADD_PLAN", payload: created });
+        addAudit(dispatch, "Plan created", state.currentUser?.name || "Owner", `${created.name} · ${formatETB(created.price)} · ${planCategoryText(state, created)}`);
         toast.success("Plan created successfully");
       }
       setShowForm(false);
@@ -122,18 +121,38 @@ export function PlansView() {
               <span><strong className="text-zinc-400">Category:</strong> {planCategoryText(state, plan)}</span>
             </div>
             <div className="flex flex-wrap gap-1 mb-4">{plan.perks.map(p => <span key={p} className="text-xs bg-zinc-800 px-2 py-1 rounded">{p}</span>)}</div>
-            <div className="flex gap-4 text-sm">
+            <div className="flex items-center gap-4 text-sm">
               <button onClick={() => openEdit(plan)} className="text-zinc-400 hover:text-white flex items-center gap-1"><PencilSimple className="w-4 h-4" /> Edit</button>
               <button
                 onClick={async () => {
-                  const updated = { ...plan, active: !plan.active };
-                  dispatch({ type: "UPDATE_PLAN", payload: updated });
-                  await updatePlan(updated);
-                  toast.success(plan.active ? "Plan deactivated" : "Plan activated");
+                  try {
+                    const updated = { ...plan, active: !plan.active };
+                    await updatePlan(updated);
+                    dispatch({ type: "UPDATE_PLAN", payload: updated });
+                    toast.success(plan.active ? "Plan deactivated" : "Plan activated");
+                  } catch (err: any) {
+                    toast.error(err?.message || "Failed to toggle plan status");
+                  }
                 }}
                 className="text-zinc-400 hover:text-white"
               >
                 {plan.active ? "Deactivate" : "Activate"}
+              </button>
+              <button
+                onClick={async () => {
+                  if (!window.confirm(`Are you sure you want to delete "${plan.name}"? This action cannot be undone.`)) return;
+                  try {
+                    await deletePlan(plan.id);
+                    dispatch({ type: "DELETE_PLAN", payload: plan.id });
+                    addAudit(dispatch, "Plan deleted", state.currentUser?.name || "Owner", plan.name);
+                    toast.success("Plan deleted successfully");
+                  } catch (err: any) {
+                    toast.error(err?.message || "Failed to delete plan");
+                  }
+                }}
+                className="text-red-400/70 hover:text-red-400 flex items-center gap-1 ml-auto"
+              >
+                <Trash className="w-4 h-4" /> Delete
               </button>
             </div>
           </div>

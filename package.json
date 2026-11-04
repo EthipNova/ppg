@@ -1,17 +1,15 @@
 {
-  "name": "react-starter-template",
+  "name": "powerplus-gym",
+  "description": "PowerPlus Gym Management System - Train Strong. Stay Strong.",
   "private": true,
-  "version": "0.0.0",
+  "version": "1.0.0",
   "type": "module",
   "scripts": {
     "dev": "cross-env PORT=3000 vite --host 0.0.0.0",
     "build": "tsc -b && vite build",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
-    "preview": "vite preview --host 0.0.0.0",
-    "build:watch": "vite build --watch > build.log 2>&1",
-    "watch:errors": "node dala-internal-watch-build-errors.js",
-    "preview:dev": "concurrently \"npm run watch:errors\""
+    "preview": "vite preview --host 0.0.0.0"
   },
   "packageManager": "bun@1.2.22",
   "dependencies": {

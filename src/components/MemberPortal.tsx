@@ -1,20 +1,21 @@
 import { useState, useEffect } from "react";
+import { useParams, useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
-import { Clock, Lightning, User, ShieldCheck, CreditCard, CheckCircle, Calendar, Flame, GraduationCap, MoonStars, MusicNotes, Sparkle, Lockers, ArrowClockwise, XCircle } from "@phosphor-icons/react";
-import { useGym, useT, formatETB, categoryLabelOf, memberActiveLocker } from "../context/GymContext";
-import AerobicsCustomerDashboard from "./AerobicsCustomerDashboard";
-import RegularCustomerDashboard from "./RegularCustomerDashboard";
+import { Clock, Lightning, User, ShieldCheck, CreditCard, Calendar, Flame, MoonStars, Lockers, ArrowClockwise, XCircle } from "@phosphor-icons/react";
+import { useGym, useT, formatETB, categoryLabelOf } from "../context/GymContext";
 import CustomerProfileView from "./CustomerProfileView";
 import CustomerSteamHistory from "./CustomerSteamHistory";
 import CustomerMotivationalHero from "./CustomerMotivationalHero";
-import type { CustomerCategory, Member, MemberStatus, Payment, AerobicsGroup, Trainer } from "../types";
+import MotivationalWatermark from "./MotivationalWatermark";
+import CustomerMyTrainer from "./CustomerMyTrainer";
+import type { CustomerCategory, Member, MemberStatus, Payment } from "../types";
 import { fetchAerobicsDashboardData, type AerobicsDashboardState } from "../services/aerobicsDashboardService";
 import { fetchRegularDashboardData, type RegularDashboardState } from "../services/regularDashboardService";
 import { fetchStudentDashboardData, type StudentDashboardState } from "../services/studentDashboardService";
+import { fetchCustomerActiveLocker, type CustomerLockerInfo } from "../services/lockers";
+import { fetchCustomerActiveTrainer, type CustomerActiveTrainerInfo } from "../services/personalTrainerService";
 import { DEMO_CREDENTIALS } from "../constants";
 
-const CATEGORY_ICONS: Record<CustomerCategory, typeof Sparkle> = { REGULAR: Sparkle, STUDENT: GraduationCap, MUSLIM: MoonStars, AEROBICS: MusicNotes };
-const METHOD_LABELS: Record<string, string> = { telebirr: "Telebirr", cbe_birr: "CBE Birr", cash: "Espèces", card: "Carte" };
 const CARD = "bg-zinc-900 border border-zinc-800 rounded-2xl p-6";
 
 function normalizeMemberStatus(value: string): MemberStatus {
@@ -53,10 +54,39 @@ function normalizePaymentType(value: string): Payment["type"] {
  */
 const REGULAR_DEMO_UUID = "11111111-1111-1111-1111-111111111104";
 
+type MemberTab = "dashboard" | "my-trainer" | "steam" | "profile";
+
+const TAB_TO_SLUG: Record<MemberTab, string> = {
+  dashboard: "dashboard",
+  "my-trainer": "my-trainer",
+  steam: "steam",
+  profile: "profile",
+};
+
+const SLUG_TO_TAB: Record<string, MemberTab> = {
+  dashboard: "dashboard",
+  "my-trainer": "my-trainer",
+  trainer: "my-trainer",
+  steam: "steam",
+  profile: "profile",
+};
+
 export default function MemberPortal() {
   const { state, dispatch } = useGym();
   const t = useT();
-  const [tab, setTab] = useState<"dashboard" | "steam" | "profile" | "womens-hour">("dashboard");
+  const { section } = useParams<{ section?: string }>();
+  const navigate = useNavigate();
+  const tab: MemberTab = (section && SLUG_TO_TAB[section.toLowerCase()]) || "dashboard";
+
+  const handleTabChange = (nextTab: MemberTab) => {
+    navigate(`/customer/${TAB_TO_SLUG[nextTab]}`);
+  };
+
+  // Active Personal Trainer State (Conditional Navigation)
+  const [activeTrainer, setActiveTrainer] = useState<CustomerActiveTrainerInfo | null>(null);
+
+  // Real Active Locker Assignment from Supabase
+  const [customerLocker, setCustomerLocker] = useState<CustomerLockerInfo | null>(null);
 
   // Determine customer category session
   const currentMemberId = state.currentUser?.memberId || "";
@@ -90,6 +120,66 @@ export default function MemberPortal() {
   const [muslimState, setMuslimState] = useState<RegularDashboardState>({ status: "loading" });
   const [studentState, setStudentState] = useState<StudentDashboardState>({ status: "loading" });
   const [fetchTrigger, setFetchTrigger] = useState(0);
+
+  // Target Customer UUID for database queries
+  const targetCustomerUuid =
+    currentMemberId === "m1"
+      ? REGULAR_DEMO_UUID
+      : currentMemberId === "m8"
+      ? DEMO_CREDENTIALS.member_aerobics.id
+      : currentMemberId === "m7"
+      ? "11111111-1111-1111-1111-111111111107"
+      : state.currentUser?.memberId || state.currentUser?.id || currentMemberId;
+
+  // Check active personal trainer assignment from Supabase
+  useEffect(() => {
+    let isMounted = true;
+    if (!targetCustomerUuid) {
+      setActiveTrainer(null);
+      return;
+    }
+
+    fetchCustomerActiveTrainer(targetCustomerUuid)
+      .then((trainer) => {
+        if (isMounted) {
+          setActiveTrainer(trainer);
+          if (!trainer) {
+            handleTabChange("dashboard");
+          }
+        }
+      })
+      .catch((err) => {
+        console.error("fetchCustomerActiveTrainer error:", err);
+        if (isMounted) setActiveTrainer(null);
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [targetCustomerUuid, fetchTrigger]);
+
+  // Query authenticated customer's real locker assignment from Supabase
+  useEffect(() => {
+    let isMounted = true;
+    if (!targetCustomerUuid) {
+      setCustomerLocker(null);
+      return;
+    }
+
+    fetchCustomerActiveLocker(targetCustomerUuid)
+      .then((locker) => {
+        if (isMounted) setCustomerLocker(locker);
+      })
+      .catch((err) => {
+        console.error("fetchCustomerActiveLocker error:", err);
+        if (isMounted) setCustomerLocker(null);
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [targetCustomerUuid, fetchTrigger]);
+
 
   useEffect(() => {
     if (!isAerobicsUser) return;
@@ -365,12 +455,10 @@ export default function MemberPortal() {
     );
   }
 
-  // Map active member, plan, group, trainer, visits, etc.
+  // Map active member, plan, visits, etc.
   let member: Member;
   let category: CustomerCategory;
   let plan: typeof state.plans[0] | undefined;
-  let group: AerobicsGroup | undefined;
-  let trainer: Trainer | undefined;
   let daysRemaining: number;
   let totalDays: number;
   let progress: number;
@@ -398,7 +486,6 @@ export default function MemberPortal() {
         durationDays: data.requestedPlan.durationDays, perks: data.requestedPlan.benefits?.split(",").map(value => value.trim()).filter(Boolean) || [], active: true, applicableCategories: ["STUDENT"] as CustomerCategory[] }
       : undefined;
     plan = studentPlan;
-    group = undefined; trainer = undefined;
     daysRemaining = data.membership?.daysRemaining || 0; totalDays = data.membership?.planDurationDays || 30;
     progress = data.membership?.progressPercent || 0; expired = !data.membership || data.membership.isExpired;
     countdownState = !data.membership || expired ? "expired" : daysRemaining <= 7 ? "expiring" : "active";
@@ -437,33 +524,6 @@ export default function MemberPortal() {
           perks: membership.plan.benefits ? membership.plan.benefits.split(",").map(b => b.trim()) : ["Aerobics Classes", "Dance Fitness"],
           active: true,
           applicableCategories: ["AEROBICS"],
-        }
-      : undefined;
-
-    group = session
-      ? {
-          id: session.id,
-          name: session.name,
-          days: session.days,
-          timeSlot: session.timeSlot,
-          trainerId: session.trainerId || "",
-          trainerName: liveTrainer?.fullName || "Assigned Coach",
-          capacity: session.capacity,
-          memberIds: [],
-        }
-      : undefined;
-
-    trainer = liveTrainer
-      ? {
-          id: liveTrainer.id,
-          name: liveTrainer.fullName,
-          email: "",
-          phone: liveTrainer.phone || "",
-          specialties: liveTrainer.specialization ? [liveTrainer.specialization] : ["Aerobics"],
-          bio: "",
-          active: liveTrainer.isActive,
-          clientIds: [],
-          weeklyHours: 16,
         }
       : undefined;
 
@@ -519,9 +579,6 @@ export default function MemberPortal() {
         }
       : undefined;
 
-    group = undefined;
-    trainer = undefined;
-
     daysRemaining = membershipSummary.daysRemaining;
     totalDays = membershipSummary.durationDays || (livePlan?.durationDays || 30);
     progress = membershipSummary.progressPercent;
@@ -574,9 +631,6 @@ export default function MemberPortal() {
         }
       : undefined;
 
-    group = undefined;
-    trainer = undefined;
-
     daysRemaining = membershipSummary.daysRemaining;
     totalDays = membershipSummary.durationDays || (livePlan?.durationDays || 30);
     progress = membershipSummary.progressPercent;
@@ -616,8 +670,6 @@ export default function MemberPortal() {
     member = fallbackMember || defaultMember;
     category = state.currentUser?.category || member.category || "REGULAR";
     plan = state.plans.find(p => p.id === member.planId);
-    group = member.aerobicsGroupId ? state.aerobicsGroups.find(g => g.id === member.aerobicsGroupId) : undefined;
-    trainer = group?.trainerId ? state.trainers.find(t => t.id === group.trainerId) : undefined;
     daysRemaining = Math.max(0, Math.ceil((new Date(member.expiryDate).getTime() - Date.now()) / 86400000));
     totalDays = plan?.durationDays || 30;
     progress = Math.max(0, Math.min(100, ((totalDays - daysRemaining) / totalDays) * 100));
@@ -626,7 +678,6 @@ export default function MemberPortal() {
     countdownState = expired ? "expired" : daysRemaining <= 7 ? "expiring" : "active";
   }
 
-  const CategoryIcon = CATEGORY_ICONS[category];
   const rules = isStudentUser && studentState.status === "success"
     ? studentState.data.accessRules.map(rule => ({ id: rule.id, category: "STUDENT" as CustomerCategory, days: rule.days, startTime: rule.startTime, endTime: rule.endTime, description: rule.description, active: true }))
     : state.accessRules.filter(r => r.category === category && r.active);
@@ -668,50 +719,106 @@ export default function MemberPortal() {
           date: (payment.paidAt || payment.createdAt).split("T")[0], method, type: "membership" as const, note: payment.status };
       })
     : state.payments.filter(p => p.memberId === member.id).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-  const myLocker = (isRegularUser && regularState.status === "success")
-    ? regularState.data.locker
-    : (isMuslimUser && muslimState.status === "success")
-    ? muslimState.data.locker
-    : (isAerobicsUser && aerobicsState.status === "success")
-    ? aerobicsState.data.locker
-    : isStudentUser && studentState.status === "success" && studentState.data.locker
-    ? { locker: { number: studentState.data.locker.number, section: studentState.data.locker.section, keyTag: "" },
-        assignment: { assignedAt: studentState.data.locker.assignedAt, dueDate: studentState.data.locker.dueDate } } as ReturnType<typeof memberActiveLocker>
-    : memberActiveLocker(state, member.id);
   const steamLeft = state.steamAccess
     .filter(s => s.customerId === member.id && new Date(s.endDate).getTime() >= Date.now() && s.remainingVisits > 0)
     .reduce((sum, s) => sum + s.remainingVisits, 0);
   const locale = state.language === "am" ? "am-ET" : "en-US";
 
   return (
-    <div className="min-h-[100dvh] bg-zinc-950 text-white p-4 md:p-8">
-      <div className="max-w-4xl mx-auto">
+    <div className="min-h-[100dvh] bg-zinc-950 text-white p-4 md:p-8 relative overflow-hidden">
+      {/* Background Motivational Typography Watermarks per section */}
+      {tab === "dashboard" && (
+        <MotivationalWatermark
+          phrases={[
+            "YOU VS YOU.",
+            "ONE MORE REP.",
+            "BUILT NOT GIVEN.",
+            "TRUST THE PROCESS.",
+            "EVERY REP COUNTS.",
+          ]}
+        />
+      )}
+      {tab === "my-trainer" && (
+        <MotivationalWatermark
+          phrases={[
+            "BUILT BY DISCIPLINE.",
+            "TRAIN WITH PURPOSE.",
+            "NO EXCUSES.",
+            "ONE MORE REP.",
+          ]}
+        />
+      )}
+      {tab === "steam" && (
+        <MotivationalWatermark
+          phrases={[
+            "RECOVER. REBUILD. REPEAT.",
+            "DISCIPLINE NEVER STOPS.",
+            "STAY STRONG.",
+          ]}
+        />
+      )}
+      {tab === "profile" && (
+        <MotivationalWatermark
+          phrases={[
+            "YOUR JOURNEY.",
+            "STAY DISCIPLINED.",
+            "BUILT NOT GIVEN.",
+          ]}
+        />
+      )}
+
+      <div className="max-w-4xl mx-auto relative z-10">
         <div className="flex items-center gap-2 mb-8">
           <ShieldCheck weight="fill" className="w-6 h-6 text-lime-400" />
           <h1 className="text-2xl font-black uppercase tracking-tight">{t("member.title")}</h1>
         </div>
         {(() => {
           const eligibleForWomensHour = category === "MUSLIM";
-          const tabs: ("dashboard" | "steam" | "profile" | "womens-hour")[] = [
+          const hasActiveTrainer = Boolean(activeTrainer && activeTrainer.status === "ACTIVE");
+          const tabs: ("dashboard" | "my-trainer" | "steam" | "profile")[] = [
             "dashboard",
+            ...(hasActiveTrainer ? ["my-trainer" as const] : []),
             "steam",
             "profile",
-            ...(eligibleForWomensHour ? ["womens-hour" as const] : []),
           ];
           return (
-            <div className="flex gap-2 mb-8 overflow-x-auto pb-1">
-              {tabs.map(key => (
-                <button
-                  key={key}
-                  onClick={() => setTab(key)}
-                  className={`px-4 py-2 rounded-lg text-sm font-semibold whitespace-nowrap transition-colors ${
-                    tab === key ? "bg-lime-400 text-zinc-950" : "bg-zinc-800 text-zinc-300 hover:bg-zinc-700"
-                  }`}
+            <>
+              {/* Mobile Navigation Dropdown (<640px) */}
+              <div className="block sm:hidden mb-6">
+                <label htmlFor="member-portal-tab-select" className="sr-only">Select member section</label>
+                <select
+                  id="member-portal-tab-select"
+                  value={tab}
+                  onChange={(e) => handleTabChange(e.target.value as MemberTab)}
+                  className="w-full min-h-[44px] bg-zinc-900 border border-zinc-700 rounded-xl px-4 py-2.5 text-sm font-bold text-white focus:outline-none focus:border-lime-400 transition-colors"
                 >
-                  {t(`member.tab.${key}`)}
-                </button>
-              ))}
-            </div>
+                  {tabs.map((key) => (
+                    <option key={key} value={key}>
+                      {key === "profile" && eligibleForWomensHour
+                        ? "Profile & Women's Hours"
+                        : t(`member.tab.${key}`)}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Desktop Navigation Tabs (>=640px) */}
+              <div className="hidden sm:flex gap-2 mb-8 overflow-x-auto pb-1">
+                {tabs.map(key => (
+                  <button
+                    key={key}
+                    onClick={() => handleTabChange(key)}
+                    className={`px-4 py-2 rounded-lg text-sm font-semibold whitespace-nowrap transition-colors min-h-[44px] flex items-center ${
+                      tab === key ? "bg-lime-400 text-zinc-950 font-bold" : "bg-zinc-800 text-zinc-300 hover:bg-zinc-700"
+                    }`}
+                  >
+                    {key === "profile" && eligibleForWomensHour
+                      ? "Profile & Women's Hours"
+                      : t(`member.tab.${key}`)}
+                  </button>
+                ))}
+              </div>
+            </>
           );
         })()}
 
@@ -726,7 +833,7 @@ export default function MemberPortal() {
               planPrice={plan?.price}
               steamLeft={steamLeft}
               categoryLabel={categoryLabelOf(state, category)}
-              lockerNumber={myLocker?.locker.number}
+              lockerNumber={customerLocker?.lockerNumber}
               isStudent={isStudentUser}
               isMuslim={isMuslimUser}
               hasActiveMembership={Boolean(
@@ -784,157 +891,122 @@ export default function MemberPortal() {
               ))}
             </div>
 
+            {/* Access Schedule Section on Customer Dashboard */}
+            {(category === "MUSLIM" || rules.length > 0) && (
+              <div className={CARD}>
+                <div className="flex items-center justify-between gap-3 mb-4">
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-10 h-10 rounded-xl bg-lime-400/10 border border-lime-400/20 flex items-center justify-center text-lime-400 shrink-0">
+                      <Clock weight="fill" className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <h3 className="font-bold text-base text-white">
+                        {category === "MUSLIM" ? "Women's Hours Access Schedule" : "Permitted Access Schedule"}
+                      </h3>
+                      <p className="text-xs text-zinc-400">
+                        Designated days and permitted workout time windows
+                      </p>
+                    </div>
+                  </div>
+                  {category === "MUSLIM" && (
+                    <span className="hidden sm:inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-lime-400/15 text-lime-400 border border-lime-400/30">
+                      <MoonStars weight="fill" className="w-3.5 h-3.5" />
+                      Women's Access
+                    </span>
+                  )}
+                </div>
+
+                {rules.length === 0 ? (
+                  <p className="text-xs text-zinc-500 py-2">
+                    No specific access restrictions configured. You have general gym floor access during standard opening hours.
+                  </p>
+                ) : (
+                  <div className="grid grid-cols-1 min-[420px]:grid-cols-2 gap-3 pt-1">
+                    {rules.map(rule => (
+                      <div
+                        key={rule.id}
+                        className="bg-zinc-800/60 border border-zinc-700/60 rounded-xl p-3.5 text-xs flex flex-col justify-between gap-2"
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <span className="font-bold text-white text-sm">
+                            {rule.days.join(", ")}
+                          </span>
+                          <span className="text-lime-400 font-mono font-bold bg-lime-400/10 border border-lime-400/20 px-2 py-0.5 rounded text-[11px] whitespace-nowrap">
+                            {rule.startTime} – {rule.endTime}
+                          </span>
+                        </div>
+                        {rule.description && (
+                          <p className="text-zinc-400 text-xs leading-relaxed">
+                            {rule.description}
+                          </p>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
             <div className={CARD}>
               <h3 className="font-bold mb-3 flex items-center gap-2"><Lockers weight="fill" className="w-5 h-5 text-amber-400" /> {t("member.myLocker")}</h3>
-              {myLocker ? (
+              {customerLocker ? (
                 <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-sm">
                   <div className="bg-zinc-800/50 rounded-xl p-3">
                     <div className="text-xs text-zinc-500">{t("locker.number")}</div>
-                    <div className="font-black text-white text-lg">{myLocker.locker.number}</div>
+                    <div className="font-black text-white text-lg">{customerLocker.lockerNumber}</div>
                   </div>
                   <div className="bg-zinc-800/50 rounded-xl p-3">
                     <div className="text-xs text-zinc-500">{t("locker.section")}</div>
-                    <div className="font-semibold text-white">{t(`locker.section.${myLocker.locker.section}`)}</div>
+                    <div className="font-semibold text-white">{customerLocker.location || "General"}</div>
                   </div>
                   <div className="bg-zinc-800/50 rounded-xl p-3">
                     <div className="text-xs text-zinc-500">{t("locker.keyTag")}</div>
-                    <div className="font-semibold text-white">{myLocker.locker.keyTag || "—"}</div>
+                    <div className="font-semibold text-white">{customerLocker.keyNumber || "—"}</div>
                   </div>
-                  <div className="bg-zinc-800/50 rounded-xl p-3">
-                    <div className="text-xs text-zinc-500">{t("locker.issuedAt")}</div>
-                    <div className="font-semibold text-white">{new Date(myLocker.assignment.assignedAt).toLocaleDateString(locale)}</div>
-                  </div>
-                  {myLocker.assignment.dueDate && (
+                  {customerLocker.assignedAt && (
+                    <div className="bg-zinc-800/50 rounded-xl p-3">
+                      <div className="text-xs text-zinc-500">{t("locker.issuedAt")}</div>
+                      <div className="font-semibold text-white">
+                        {new Date(customerLocker.assignedAt).toLocaleDateString(locale)}
+                      </div>
+                    </div>
+                  )}
+                  {customerLocker.dueDate && (
                     <div className="bg-zinc-800/50 rounded-xl p-3">
                       <div className="text-xs text-zinc-500">{t("locker.dueDate")}</div>
-                      <div className="font-semibold text-white">{new Date(myLocker.assignment.dueDate).toLocaleDateString(locale)}</div>
+                      <div className="font-semibold text-white">
+                        {new Date(customerLocker.dueDate).toLocaleDateString(locale)}
+                      </div>
                     </div>
                   )}
                   <div className="bg-zinc-800/50 rounded-xl p-3">
                     <div className="text-xs text-zinc-500">{t("locker.status")}</div>
-                    <div className="font-semibold text-amber-400">{t("locker.status.IN_USE")}</div>
+                    <div className="font-semibold text-amber-400 capitalize">
+                      {customerLocker.status === "ACTIVE" || customerLocker.status === "active" ? t("locker.status.IN_USE") : customerLocker.status}
+                    </div>
                   </div>
                 </div>
               ) : (
-                <p className="text-sm text-zinc-500">{t("member.noLocker")}</p>
-              )}
-            </div>
-
-            {category === "AEROBICS" ? (
-              <AerobicsCustomerDashboard
-                member={member}
-                group={group}
-                trainer={trainer}
-                occupancy={isAerobicsUser && aerobicsState.status === "success" ? (aerobicsState.data.occupancy ?? undefined) : undefined}
-              />
-            ) : category === "REGULAR" ? (
-              <RegularCustomerDashboard
-                member={member}
-                membershipSummary={isRegularUser && regularState.status === "success" ? regularState.data.membershipSummary : undefined}
-                attendance={isRegularUser && regularState.status === "success" ? regularState.data.attendance : undefined}
-                payments={isRegularUser && regularState.status === "success" ? regularState.data.payments : undefined}
-              />
-            ) : (
-              <div className={CARD}>
-                <h3 className="font-bold mb-3 flex items-center gap-2"><CategoryIcon weight="fill" className="w-5 h-5 text-lime-400" /> {t("member.category")} : {categoryLabelOf(state, category)}</h3>
-                <div className="space-y-1">
-                  {rules.map(r => (
-                    <div key={r.id} className="text-sm text-zinc-400 flex items-start gap-2"><Clock className="w-4 h-4 text-lime-400 mt-0.5 shrink-0" /><span>{r.startTime} – {r.endTime} · {r.days.join(", ")}</span></div>
-                  ))}
-                  {rules.length === 0 && <p className="text-sm text-zinc-500">—</p>}
-                </div>
-                {category === "STUDENT" && (
-                  <div className="mt-4 bg-zinc-800/50 rounded-xl p-4 space-y-2 text-sm">
-                    <div className="flex justify-between"><span className="text-zinc-500">Student ID</span><span>{member.studentId ? `${"•".repeat(Math.max(0, member.studentId.length - 4))}${member.studentId.slice(-4)}` : "Not provided"}</span></div>
-                    <div className="flex justify-between"><span className="text-zinc-500">Institution</span><span>{member.institution || "Not provided"}</span></div>
-                    <div className="flex justify-between">
-                      <span className="text-zinc-500">Student rate</span>
-                      <span className="text-lime-400 font-semibold">Active Student Rate</span>
-                    </div>
-                    <p className="text-xs text-zinc-500">Student membership registered with institution: {member.institution || "On file"}.</p>
-                  </div>
-                )}
-                {category === "STUDENT" && isStudentUser && studentState.status === "success" && (
-                  <div className="mt-4 border-t border-zinc-800 pt-4">
-                    <h4 className="font-semibold text-sm mb-2">Upcoming classes</h4>
-                    {studentState.data.classSchedule.length === 0 ? (
-                      <p className="text-sm text-zinc-500">No upcoming class bookings.</p>
-                    ) : (
-                      <div className="space-y-2">
-                        {studentState.data.classSchedule.map(session => (
-                          <div key={session.id} className="rounded-xl bg-zinc-800/50 p-3 text-sm">
-                            <div className="flex items-start justify-between gap-3">
-                              <span className="font-semibold">{session.className}</span>
-                              <span className="text-xs text-zinc-400">{session.bookingStatus}</span>
-                            </div>
-                            <p className="mt-1 text-xs text-zinc-400">
-                              {new Date(session.startAt).toLocaleString(locale, { weekday: "short", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
-                              {session.endAt ? ` – ${new Date(session.endAt).toLocaleTimeString(locale, { hour: "2-digit", minute: "2-digit" })}` : ""}
-                            </p>
-                            {session.description && <p className="mt-1 text-xs text-zinc-500">{session.description}</p>}
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                )}
-                <p className="text-xs text-zinc-600 mt-3">Only reception or the owner can change your category.</p>
-              </div>
-            )}
-
-            {plan && (
-              <div className={CARD}>
-                <h3 className="font-bold mb-3">{t("member.perks")} ({plan.name})</h3>
-                <div className="flex flex-wrap gap-2">
-                  {plan.perks.map(p => <span key={p} className="bg-lime-400/10 border border-lime-400/20 text-lime-400 px-3 py-1.5 rounded-full text-sm flex items-center gap-1"><CheckCircle weight="fill" className="w-3 h-3" />{p}</span>)}
-                </div>
-              </div>
-            )}
-
-            <div className={CARD}>
-              <h3 className="font-bold mb-4 flex items-center gap-2"><Clock className="w-5 h-5 text-lime-400" /> {t("member.recentVisits")}</h3>
-              {visits.length === 0 ? <p className="text-zinc-500 text-sm">{t("member.noVisits")}</p> : (
-                <div className="space-y-2">
-                  {visits.slice(0, 10).map(v => (
-                    <div key={v.id} className="flex justify-between items-center py-2 border-b border-zinc-800/50 text-sm">
-                      <div className="flex items-center gap-3">
-                        <div className={`w-2 h-2 rounded-full ${v.accessStatus === "denied" ? "bg-red-400" : "bg-lime-400"}`} />
-                        <span>{new Date(v.timestamp).toLocaleDateString(locale, { weekday: "short", month: "short", day: "numeric" })}</span>
-                      </div>
-                      <span className="text-zinc-500">{new Date(v.timestamp).toLocaleTimeString(locale, { hour: "2-digit", minute: "2-digit" })}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            <div className={CARD}>
-              <h3 className="font-bold mb-4 flex items-center gap-2">
-                <CreditCard className="w-5 h-5 text-lime-400" />
-                {t("member.payments")}
-              </h3>
-              {payments.length === 0 ? (
-                <div className="py-4 text-center text-zinc-500 text-sm">
-                  <p>No membership payments recorded</p>
-                </div>
-              ) : (
-                <div className="space-y-2">
-                  {payments.slice(0, 10).map(p => (
-                    <div key={p.id} className="flex justify-between items-center py-2 border-b border-zinc-800/50 text-sm">
-                      <div className="flex items-center gap-3">
-                        <span className="text-zinc-300 font-medium">{p.date}</span>
-                        <span className="text-zinc-500 text-xs">{METHOD_LABELS[p.method] || p.method}</span>
-                        {isStudentUser && <span className={`text-[10px] uppercase ${p.note === "PENDING" ? "text-yellow-400" : "text-zinc-500"}`}>{p.note}</span>}
-                      </div>
-                      <span className="text-lime-400 font-bold">{formatETB(p.amount)}</span>
-                    </div>
-                  ))}
-                </div>
+                <p className="text-sm text-zinc-400">
+                  No locker has been assigned to your account yet. Please contact Reception.
+                </p>
               )}
             </div>
           </div>
         )}
 
+        {tab === "my-trainer" && activeTrainer && (
+          <CustomerMyTrainer
+            customerId={member.id}
+            initialTrainer={activeTrainer}
+            onTrainerStatusChange={(hasTrainer) => {
+              if (!hasTrainer) {
+                setActiveTrainer(null);
+                handleTabChange("dashboard");
+              }
+            }}
+          />
+        )}
         {tab === "steam" && (
           <CustomerSteamHistory customerId={member.id} />
         )}
@@ -942,18 +1014,10 @@ export default function MemberPortal() {
           <CustomerProfileView
             customerId={member.id}
             onProfileUpdated={() => setFetchTrigger(prev => prev + 1)}
+            isMuslimCategory={category === "MUSLIM"}
+            womensHourRules={rules}
+            womensHourTrainers={state.trainers.filter(trainer => trainer.active)}
           />
-        )}
-        {tab === "womens-hour" && (
-          category === "MUSLIM" ? (
-            <WomensHourView
-              member={member}
-              rules={rules}
-              trainers={state.trainers.filter(trainer => trainer.active)}
-            />
-          ) : (
-            <UnauthorizedWomensHourView />
-          )
         )}
       </div>
     </div>
@@ -965,92 +1029,4 @@ function PortalState({ title, message, retry }: { title: string; message: string
     <User className="w-12 h-12 text-zinc-500 mx-auto mb-3" /><h2 className="text-xl font-bold mb-2">{title}</h2><p className="text-zinc-400 text-sm">{message}</p>
     {retry && <button onClick={retry} className="mt-5 bg-lime-400 text-zinc-950 px-5 py-2.5 rounded-xl font-bold text-sm inline-flex items-center gap-2"><ArrowClockwise weight="bold" className="w-4 h-4" />Try Again</button>}
   </div></div>;
-}
-
-function WomensHourView({
-  member,
-  rules,
-  trainers,
-}: {
-  member: Member;
-  rules: { id: string; startTime: string; endTime: string; days: string[]; description: string }[];
-  trainers: { id: string; name: string; specialties: string[]; bio?: string }[];
-}) {
-  return (
-    <div className="max-w-2xl mx-auto space-y-6">
-      <div className={`${CARD} border-lime-400/30`}>
-        <div className="flex items-start gap-4">
-          <MoonStars weight="fill" className="w-10 h-10 text-lime-400 shrink-0" />
-          <div>
-            <h2 className="text-2xl font-black">Women's Hour</h2>
-            <p className="text-sm text-zinc-400 mt-2">
-              A designated gym access area for members registered under the Women's Hours (Muslim) option.
-            </p>
-          </div>
-        </div>
-        <div className="mt-5 inline-flex items-center gap-2 rounded-full bg-lime-400/15 px-3 py-1.5 text-sm font-semibold text-lime-400">
-          <CheckCircle weight="fill" className="w-4 h-4" /> Eligible member
-        </div>
-      </div>
-
-      <div className={CARD}>
-        <h3 className="font-bold mb-4 flex items-center gap-2">
-          <Clock className="w-5 h-5 text-lime-400" /> Schedule
-        </h3>
-        {rules.length === 0 ? (
-          <p className="text-sm text-zinc-500">No Women's Hour schedule is configured.</p>
-        ) : (
-          <div className="space-y-3">
-            {rules.map(rule => (
-              <div key={rule.id} className="bg-zinc-800/50 rounded-xl p-4">
-                <div className="flex justify-between gap-4 text-sm">
-                  <span className="font-semibold text-white">{rule.days.join(", ")}</span>
-                  <span className="text-lime-400 font-semibold">{rule.startTime} - {rule.endTime}</span>
-                </div>
-                {rule.description && <p className="text-xs text-zinc-500 mt-2">{rule.description}</p>}
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-
-      <div className={CARD}>
-        <h3 className="font-bold mb-4 flex items-center gap-2">
-          <User className="w-5 h-5 text-lime-400" /> Your member information
-        </h3>
-        <div className="grid grid-cols-2 gap-4 text-sm">
-          <div><span className="text-zinc-500 block">Name</span><span>{member.name}</span></div>
-          <div><span className="text-zinc-500 block">Member ID</span><span>{member.memberId}</span></div>
-          <div><span className="text-zinc-500 block">Phone</span><span>{member.phone || "—"}</span></div>
-          <div><span className="text-zinc-500 block">Email</span><span>{member.email || "—"}</span></div>
-        </div>
-      </div>
-      <div className={CARD}>
-        <h3 className="font-bold mb-4">Training team</h3>
-        {trainers.length === 0 ? (
-          <p className="text-sm text-zinc-500">No active trainers are currently listed.</p>
-        ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            {trainers.map(trainer => (
-              <div key={trainer.id} className="bg-zinc-800/50 rounded-xl p-4">
-                <div className="font-semibold">{trainer.name}</div>
-                <div className="text-xs text-lime-400 mt-1">{trainer.specialties.join(" · ")}</div>
-                {trainer.bio && <p className="text-xs text-zinc-500 mt-2">{trainer.bio}</p>}
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function UnauthorizedWomensHourView() {
-  return (
-    <div className={`${CARD} max-w-lg mx-auto text-center`}>
-      <ShieldCheck className="w-10 h-10 text-zinc-500 mx-auto mb-3" />
-      <h2 className="text-xl font-bold">Women's Hour unavailable</h2>
-      <p className="text-sm text-zinc-500 mt-2">This area is available only to eligible members.</p>
-    </div>
-  );
 }

@@ -21,13 +21,32 @@ import {
   uploadCustomerProfilePhoto,
   type CustomerProfileState,
 } from "../services/customerProfileService";
+import MotivationalWatermark from "./MotivationalWatermark";
 
 const CARD = "bg-zinc-900 border border-zinc-800 rounded-2xl p-6";
 const READONLY_ROW = "bg-zinc-800/40 border border-zinc-800/70 rounded-xl px-4 py-3 flex items-center justify-between";
 
+export interface WomensHourRule {
+  id: string;
+  startTime: string;
+  endTime: string;
+  days: string[];
+  description?: string;
+}
+
+export interface WomensHourTrainer {
+  id: string;
+  name: string;
+  specialties: string[];
+  bio?: string;
+}
+
 interface CustomerProfileViewProps {
   customerId: string;
   onProfileUpdated?: () => void;
+  isMuslimCategory?: boolean;
+  womensHourRules?: WomensHourRule[];
+  womensHourTrainers?: WomensHourTrainer[];
 }
 
 export default function CustomerProfileView({
@@ -157,7 +176,12 @@ export default function CustomerProfileView({
   const CategoryIcon = categoryIconMap[profile.customerType.toUpperCase()] || Sparkle;
 
   return (
-    <div className="max-w-lg mx-auto space-y-6">
+    <div className="max-w-lg mx-auto space-y-6 relative">
+      <MotivationalWatermark
+        phrases={["YOUR JOURNEY.", "STAY DISCIPLINED.", "BUILT NOT GIVEN."]}
+        opacity="opacity-[0.03]"
+      />
+      <div className="relative z-10 space-y-6">
       {/* Profile Photo Header Card */}
       <div className={`${CARD} flex flex-col sm:flex-row items-center gap-5 relative overflow-hidden`}>
         <div className="relative group shrink-0">
@@ -387,6 +411,7 @@ export default function CustomerProfileView({
         <p>
           For security and membership integrity, personal and account information is managed by the gym staff. If you need to update your phone number, name, or membership category, please visit the Reception desk.
         </p>
+      </div>
       </div>
     </div>
   );

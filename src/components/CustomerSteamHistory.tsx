@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import { Drop, Calendar, CreditCard, Clock, ArrowClockwise } from "@phosphor-icons/react";
 import { supabase } from "../integrations/supabase/client";
 import { formatETB } from "../context/GymContext";
+import MotivationalWatermark from "./MotivationalWatermark";
 
 const CARD = "bg-zinc-900 border border-zinc-800 rounded-2xl p-6";
 
@@ -125,7 +126,12 @@ export default function CustomerSteamHistory({ customerId }: CustomerSteamHistor
   }
 
   return (
-    <div className="max-w-2xl mx-auto space-y-6">
+    <div className="max-w-2xl mx-auto space-y-6 relative">
+      <MotivationalWatermark
+        phrases={["RECOVER. REBUILD. REPEAT.", "DISCIPLINE NEVER STOPS.", "STAY STRONG."]}
+        opacity="opacity-[0.03]"
+      />
+      <div className="relative z-10 space-y-6">
       {/* Header Banner */}
       <div className={`${CARD} relative overflow-hidden`}>
         <div className="flex items-center gap-3">
@@ -214,6 +220,7 @@ export default function CustomerSteamHistory({ customerId }: CustomerSteamHistor
           </div>
         </div>
       )}
+      </div>
     </div>
   );
 }

@@ -100,13 +100,13 @@ export async function signOutUser() {
  * Requests a password recovery link via Supabase Auth.
  */
 export async function requestPasswordRecovery(email: string) {
-  const trimmed = email.trim();
+  const trimmed = email.trim().toLowerCase();
   if (!trimmed) {
     throw new Error("Email address is required.");
   }
 
   const redirectUrl = typeof window !== "undefined" && window.location.origin
-    ? window.location.origin
+    ? `${window.location.origin}/reset-password`
     : undefined;
 
   return supabase.auth.resetPasswordForEmail(trimmed, {
@@ -118,12 +118,53 @@ export async function requestPasswordRecovery(email: string) {
  * Updates the password for the current authenticated recovery or active session.
  */
 export async function updateUserPassword(newPassword: string) {
-  if (!newPassword || newPassword.length < 6) {
-    throw new Error("Password must be at least 6 characters.");
+  if (!newPassword || newPassword.length < 8) {
+    throw new Error("Password must be at least 8 characters.");
   }
   return supabase.auth.updateUser({
     password: newPassword,
   });
+}
+
+/**
+ * Securely changes the password of the currently authenticated Admin or user.
+ * Validates the current password before applying the change.
+ */
+export async function changeCurrentUserPassword(
+  currentPassword: string,
+  newPassword: string
+): Promise<void> {
+  if (!currentPassword) {
+    throw new Error("Current password is required.");
+  }
+  if (!newPassword || newPassword.length < 6) {
+    throw new Error("New password must be at least 6 characters.");
+  }
+
+  // 1. Get currently authenticated session user
+  const { data: userData, error: userError } = await supabase.auth.getUser();
+  if (userError || !userData?.user || !userData.user.email) {
+    throw new Error("You must be actively signed in to change your password.");
+  }
+
+  // 2. Validate current password against Supabase Auth
+  const { error: signInError } = await supabase.auth.signInWithPassword({
+    email: userData.user.email,
+    password: currentPassword,
+  });
+
+  if (signInError) {
+    throw new Error("Current password is incorrect. Please verify and try again.");
+  }
+
+  // 3. Apply the new password
+  const { error: updateError } = await supabase.auth.updateUser({
+    password: newPassword,
+  });
+
+  if (updateError) {
+    throw new Error(updateError.message || "Failed to update password.");
+  }
 }
 
 interface DbUser {

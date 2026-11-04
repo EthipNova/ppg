@@ -158,6 +158,9 @@ export interface WorkoutExercise {
 export interface WorkoutPlan {
   id: string;
   customerId: string | null;
+  customer_id?: string | null;
+  customerName?: string | null;
+  customerCode?: string | null;
   trainerId: string;
   title: string;
   description: string | null;
@@ -191,6 +194,9 @@ export interface MealItem {
 export interface MealPlan {
   id: string;
   customerId: string | null;
+  customer_id?: string | null;
+  customerName?: string | null;
+  customerCode?: string | null;
   trainerId: string;
   title: string;
   startDate: string;
@@ -209,6 +215,10 @@ export interface MealPlan {
 export interface ExerciseVideo {
   id: string;
   trainerId: string;
+  customerId?: string | null;
+  customer_id?: string | null;
+  customerName?: string | null;
+  customerCode?: string | null;
   title: string;
   description: string | null;
   storagePath: string;
@@ -222,6 +232,9 @@ export interface ExerciseVideo {
 export interface MemberProgressRecord {
   id: string;
   customerId: string;
+  customer_id?: string;
+  customerName?: string | null;
+  customerCode?: string | null;
   trainerId: string;
   recordedDate: string;
   weightKg?: number | null;
@@ -242,6 +255,9 @@ export interface MemberProgressRecord {
 export interface PersonalTrainingSession {
   id: string;
   customerId: string;
+  customer_id?: string;
+  customerName?: string | null;
+  customerCode?: string | null;
   trainerId: string;
   sessionDate: string;
   startTime: string | null;
@@ -770,6 +786,196 @@ export async function updateWorkoutPlanStatus(
   if (error) throw new Error(error.message);
 }
 
+export async function fetchTrainerWorkoutPlans(trainerId: string): Promise<WorkoutPlan[]> {
+  const { data, error } = await supabase
+    .from("workout_plans")
+    .select(`
+      id,
+      customer_id,
+      trainer_id,
+      title,
+      description,
+      start_date,
+      end_date,
+      status,
+      is_template,
+      created_at,
+      workout_exercises (
+        id,
+        workout_plan_id,
+        day_of_week,
+        exercise_name,
+        sets,
+        reps,
+        duration_seconds,
+        rest_seconds,
+        instructions,
+        video_url,
+        order_index
+      ),
+      customers:customer_id (
+        id,
+        first_name,
+        last_name,
+        customer_code
+      )
+    `)
+    .eq("trainer_id", trainerId)
+    .order("created_at", { ascending: false });
+
+  if (error) {
+    console.error("fetchTrainerWorkoutPlans error:", error);
+    throw new Error(error.message);
+  }
+
+  return (data || []).map((p: any) => {
+    const cust = p.customers ? (Array.isArray(p.customers) ? p.customers[0] : p.customers) : null;
+    return {
+      id: p.id,
+      customerId: p.customer_id,
+      customer_id: p.customer_id,
+      customerName: cust ? `${cust.first_name || ""} ${cust.last_name || ""}`.trim() : null,
+      customerCode: cust ? cust.customer_code : null,
+      trainerId: p.trainer_id,
+      title: p.title,
+      description: p.description,
+      startDate: p.start_date,
+      start_date: p.start_date,
+      endDate: p.end_date,
+      end_date: p.end_date,
+      status: p.status,
+      isTemplate: Boolean(p.is_template),
+      createdAt: p.created_at,
+      exercises: (p.workout_exercises || [])
+        .sort((a: any, b: any) => (a.order_index ?? 0) - (b.order_index ?? 0))
+        .map((e: any) => ({
+          id: e.id,
+          workoutPlanId: e.workout_plan_id,
+          dayOfWeek: e.day_of_week,
+          day_of_week: e.day_of_week,
+          exerciseName: e.exercise_name,
+          exercise_name: e.exercise_name,
+          sets: Number(e.sets) || 3,
+          reps: Number(e.reps) || 10,
+          durationSeconds: e.duration_seconds ? Number(e.duration_seconds) : undefined,
+          duration_seconds: e.duration_seconds ? Number(e.duration_seconds) : null,
+          restSeconds: e.rest_seconds ? Number(e.rest_seconds) : undefined,
+          rest_interval_seconds: e.rest_seconds ? Number(e.rest_seconds) : null,
+          instructions: e.instructions || "",
+          videoUrl: e.video_url || undefined,
+          orderIndex: Number(e.order_index) || 0,
+        })),
+    };
+  });
+}
+
+export async function deleteWorkoutPlan(planId: string): Promise<void> {
+  const { error } = await supabase.from("workout_plans").delete().eq("id", planId);
+  if (error) {
+    console.error("deleteWorkoutPlan error:", error);
+    throw new Error(error.message);
+  }
+}
+
+export async function updateWorkoutPlan(
+  planId: string,
+  params: {
+    title?: string;
+    description?: string;
+    status?: "ACTIVE" | "COMPLETED" | "ARCHIVED";
+    exercises: Array<{
+      id?: string;
+      dayOfWeek: string;
+      exerciseName: string;
+      sets: number;
+      reps: number;
+      orderIndex?: number;
+    }>;
+  }
+): Promise<void> {
+  if (params.title || params.description || params.status) {
+    const updateObj: any = { updated_at: new Date().toISOString() };
+    if (params.title) updateObj.title = params.title.trim();
+    if (params.description !== undefined) updateObj.description = params.description?.trim() || null;
+    if (params.status) updateObj.status = params.status;
+    const { error: planError } = await ptDb.from("workout_plans").update(updateObj).eq("id", planId);
+    if (planError) throw new Error(planError.message);
+  }
+
+  // Replace exercises: delete existing and insert updated
+  const { error: delError } = await ptDb.from("workout_exercises").delete().eq("workout_plan_id", planId);
+  if (delError) throw new Error(delError.message);
+
+  if (params.exercises.length > 0) {
+    const exerciseRows = params.exercises.map((ex, idx) => ({
+      workout_plan_id: planId,
+      day_of_week: ex.dayOfWeek || "Day 1",
+      exercise_name: ex.exerciseName.trim(),
+      sets: Number(ex.sets) || 3,
+      reps: Number(ex.reps) || 10,
+      order_index: ex.orderIndex ?? idx,
+    }));
+    const { error: insError } = await ptDb.from("workout_exercises").insert(exerciseRows);
+    if (insError) throw new Error(insError.message);
+  }
+}
+
+export async function distributeWorkoutPlan(params: {
+  trainerId: string;
+  customerIds: string[];
+  title: string;
+  description?: string;
+  exercises: Array<{
+    dayOfWeek: string;
+    exerciseName: string;
+    sets: number;
+    reps: number;
+  }>;
+}): Promise<{ successful: string[]; failed: Array<{ customerId: string; error: string }> }> {
+  const successful: string[] = [];
+  const failed: Array<{ customerId: string; error: string }> = [];
+
+  for (const customerId of params.customerIds) {
+    try {
+      // Duplicate check: check if an ACTIVE plan with identical title already exists
+      const { data: existing } = await ptDb
+        .from("workout_plans")
+        .select("id")
+        .eq("customer_id", customerId)
+        .eq("trainer_id", params.trainerId)
+        .eq("title", params.title.trim())
+        .eq("status", "ACTIVE")
+        .maybeSingle();
+
+      if (existing) {
+        // Skip duplicate
+        successful.push(customerId);
+        continue;
+      }
+
+      await createWorkoutPlan({
+        customerId,
+        trainerId: params.trainerId,
+        title: params.title.trim(),
+        description: params.description?.trim(),
+        exercises: params.exercises.map((ex, i) => ({
+          dayOfWeek: ex.dayOfWeek,
+          exerciseName: ex.exerciseName,
+          sets: Number(ex.sets) || 3,
+          reps: Number(ex.reps) || 10,
+          orderIndex: i,
+        })),
+      });
+      successful.push(customerId);
+    } catch (err: any) {
+      console.error(`Failed to assign workout plan to customer ${customerId}:`, err);
+      failed.push({ customerId, error: err?.message || "Failed to create plan." });
+    }
+  }
+
+  return { successful, failed };
+}
+
 // ----------------------------------------------------------------------------
 // 5. Meal Plans Management
 // ----------------------------------------------------------------------------
@@ -905,6 +1111,199 @@ export async function createMealPlan(params: {
   return (plan as any).id;
 }
 
+export async function fetchTrainerMealPlans(trainerId: string): Promise<MealPlan[]> {
+  const { data, error } = await supabase
+    .from("meal_plans")
+    .select(`
+      id,
+      customer_id,
+      trainer_id,
+      title,
+      start_date,
+      end_date,
+      daily_calorie_target,
+      notes,
+      status,
+      is_template,
+      created_at,
+      meal_items (
+        id,
+        meal_plan_id,
+        meal_type,
+        food_name,
+        portion,
+        calories,
+        protein_grams,
+        carbs_grams,
+        fats_grams,
+        nutritional_instructions,
+        order_index
+      ),
+      customers:customer_id (
+        id,
+        first_name,
+        last_name,
+        customer_code
+      )
+    `)
+    .eq("trainer_id", trainerId)
+    .order("created_at", { ascending: false });
+
+  if (error) {
+    console.error("fetchTrainerMealPlans error:", error);
+    throw new Error(error.message);
+  }
+
+  return (data || []).map((m: any) => {
+    const cust = m.customers ? (Array.isArray(m.customers) ? m.customers[0] : m.customers) : null;
+    return {
+      id: m.id,
+      customerId: m.customer_id,
+      customer_id: m.customer_id,
+      customerName: cust ? `${cust.first_name || ""} ${cust.last_name || ""}`.trim() : null,
+      customerCode: cust ? cust.customer_code : null,
+      trainerId: m.trainer_id,
+      title: m.title,
+      startDate: m.start_date,
+      start_date: m.start_date,
+      endDate: m.end_date,
+      end_date: m.end_date,
+      dailyCalorieTarget: m.daily_calorie_target ? Number(m.daily_calorie_target) : null,
+      daily_calories: m.daily_calorie_target ? Number(m.daily_calorie_target) : null,
+      notes: m.notes,
+      status: m.status,
+      isTemplate: Boolean(m.is_template),
+      createdAt: m.created_at,
+      items: (m.meal_items || [])
+        .sort((a: any, b: any) => (a.order_index ?? 0) - (b.order_index ?? 0))
+        .map((it: any) => ({
+          id: it.id,
+          mealPlanId: it.meal_plan_id,
+          mealType: it.meal_type,
+          meal_type: it.meal_type,
+          foodName: it.food_name,
+          food_name: it.food_name,
+          portion: it.portion || "",
+          calories: it.calories ? Number(it.calories) : undefined,
+          proteinGrams: it.protein_grams ? Number(it.protein_grams) : undefined,
+          carbsGrams: it.carbs_grams ? Number(it.carbs_grams) : undefined,
+          fatsGrams: it.fats_grams ? Number(it.fats_grams) : undefined,
+          nutritionalInstructions: it.nutritional_instructions || undefined,
+          instructions: it.nutritional_instructions || undefined,
+          orderIndex: Number(it.order_index) || 0,
+        })),
+    };
+  });
+}
+
+export async function deleteMealPlan(planId: string): Promise<void> {
+  const { error } = await supabase.from("meal_plans").delete().eq("id", planId);
+  if (error) {
+    console.error("deleteMealPlan error:", error);
+    throw new Error(error.message);
+  }
+}
+
+export async function updateMealPlan(
+  planId: string,
+  params: {
+    title?: string;
+    dailyCalories?: number | null;
+    notes?: string | null;
+    status?: "ACTIVE" | "COMPLETED" | "ARCHIVED";
+    items: Array<{
+      id?: string;
+      mealType: string;
+      foodName: string;
+      portion: string;
+      instructions?: string;
+      orderIndex?: number;
+    }>;
+  }
+): Promise<void> {
+  const updateObj: any = { updated_at: new Date().toISOString() };
+  if (params.title) updateObj.title = params.title.trim();
+  if (params.dailyCalories !== undefined) updateObj.daily_calorie_target = params.dailyCalories;
+  if (params.notes !== undefined) updateObj.notes = params.notes?.trim() || null;
+  if (params.status) updateObj.status = params.status;
+
+  const { error: planError } = await ptDb.from("meal_plans").update(updateObj).eq("id", planId);
+  if (planError) throw new Error(planError.message);
+
+  const { error: delError } = await ptDb.from("meal_items").delete().eq("meal_plan_id", planId);
+  if (delError) throw new Error(delError.message);
+
+  if (params.items.length > 0) {
+    const itemRows = params.items.map((it, idx) => ({
+      meal_plan_id: planId,
+      meal_type: it.mealType.toUpperCase(),
+      food_name: it.foodName.trim(),
+      portion: it.portion.trim(),
+      nutritional_instructions: it.instructions?.trim() || null,
+      order_index: it.orderIndex ?? idx,
+    }));
+    const { error: insError } = await ptDb.from("meal_items").insert(itemRows);
+    if (insError) throw new Error(insError.message);
+  }
+}
+
+export async function distributeMealPlan(params: {
+  trainerId: string;
+  customerIds: string[];
+  title: string;
+  dailyCalories?: number;
+  notes?: string;
+  items: Array<{
+    mealType: string;
+    foodName: string;
+    portion: string;
+    instructions?: string;
+  }>;
+}): Promise<{ successful: string[]; failed: Array<{ customerId: string; error: string }> }> {
+  const successful: string[] = [];
+  const failed: Array<{ customerId: string; error: string }> = [];
+
+  for (const customerId of params.customerIds) {
+    try {
+      // Duplicate check
+      const { data: existing } = await ptDb
+        .from("meal_plans")
+        .select("id")
+        .eq("customer_id", customerId)
+        .eq("trainer_id", params.trainerId)
+        .eq("title", params.title.trim())
+        .eq("status", "ACTIVE")
+        .maybeSingle();
+
+      if (existing) {
+        successful.push(customerId);
+        continue;
+      }
+
+      await createMealPlan({
+        customerId,
+        trainerId: params.trainerId,
+        title: params.title.trim(),
+        dailyCalories: params.dailyCalories,
+        notes: params.notes?.trim(),
+        items: params.items.map((it, i) => ({
+          mealType: it.mealType,
+          foodName: it.foodName,
+          portion: it.portion,
+          instructions: it.instructions,
+          orderIndex: i,
+        })),
+      });
+      successful.push(customerId);
+    } catch (err: any) {
+      console.error(`Failed to assign meal plan to customer ${customerId}:`, err);
+      failed.push({ customerId, error: err?.message || "Failed to create meal plan." });
+    }
+  }
+
+  return { successful, failed };
+}
+
 // ----------------------------------------------------------------------------
 // 6. Exercise Videos Management (Supabase Storage & DB)
 // ----------------------------------------------------------------------------
@@ -916,7 +1315,8 @@ export async function uploadExerciseVideo(
   trainerId: string,
   file: File,
   title: string,
-  description?: string
+  description?: string,
+  customerId?: string | null
 ): Promise<ExerciseVideo> {
   if (!ALLOWED_VIDEO_MIME_TYPES.includes(file.type)) {
     throw new Error("Invalid video format. Supported formats: MP4, WebM, QuickTime, OGG.");
@@ -950,6 +1350,7 @@ export async function uploadExerciseVideo(
     .from("exercise_videos")
     .insert({
       trainer_id: trainerId,
+      customer_id: customerId || null,
       title: title.trim(),
       description: description?.trim() || null,
       storage_path: storagePath,
@@ -969,6 +1370,8 @@ export async function uploadExerciseVideo(
   return {
     id: v.id,
     trainerId: v.trainer_id,
+    customerId: v.customer_id || null,
+    customer_id: v.customer_id || null,
     title: v.title,
     description: v.description,
     storagePath: v.storage_path,
@@ -982,7 +1385,24 @@ export async function uploadExerciseVideo(
 export async function fetchTrainerExerciseVideos(trainerId: string): Promise<ExerciseVideo[]> {
   const { data, error } = await ptDb
     .from("exercise_videos")
-    .select("*")
+    .select(`
+      id,
+      trainer_id,
+      customer_id,
+      title,
+      description,
+      storage_path,
+      file_size_bytes,
+      mime_type,
+      duration_seconds,
+      created_at,
+      customers:customer_id (
+        id,
+        first_name,
+        last_name,
+        customer_code
+      )
+    `)
     .eq("trainer_id", trainerId)
     .order("created_at", { ascending: false });
 
@@ -991,17 +1411,24 @@ export async function fetchTrainerExerciseVideos(trainerId: string): Promise<Exe
     throw new Error(error.message);
   }
 
-  return (data || []).map((row: any) => ({
-    id: row.id,
-    trainerId: row.trainer_id,
-    title: row.title,
-    description: row.description,
-    storagePath: row.storage_path,
-    fileSizeBytes: row.file_size_bytes,
-    mimeType: row.mime_type,
-    durationSeconds: row.duration_seconds,
-    createdAt: row.created_at,
-  }));
+  return (data || []).map((row: any) => {
+    const cust = row.customers ? (Array.isArray(row.customers) ? row.customers[0] : row.customers) : null;
+    return {
+      id: row.id,
+      trainerId: row.trainer_id,
+      customerId: row.customer_id || null,
+      customer_id: row.customer_id || null,
+      customerName: cust ? `${cust.first_name || ""} ${cust.last_name || ""}`.trim() : null,
+      customerCode: cust ? cust.customer_code : null,
+      title: row.title,
+      description: row.description,
+      storagePath: row.storage_path,
+      fileSizeBytes: row.file_size_bytes,
+      mimeType: row.mime_type,
+      durationSeconds: row.duration_seconds,
+      createdAt: row.created_at,
+    };
+  });
 }
 
 export async function getExerciseVideoSignedUrl(storagePath: string): Promise<string> {
@@ -1017,10 +1444,127 @@ export async function getExerciseVideoSignedUrl(storagePath: string): Promise<st
   return data.signedUrl;
 }
 
-export async function deleteExerciseVideo(videoId: string, storagePath: string): Promise<void> {
-  const { error: dbError } = await supabase.from("exercise_videos").delete().eq("id", videoId);
-  if (dbError) throw new Error(dbError.message);
-  await supabase.storage.from("trainer-videos").remove([storagePath]);
+export async function deleteExerciseVideo(
+  videoId: string,
+  storagePath: string,
+  deleteAllWithStoragePath = false
+): Promise<void> {
+  if (deleteAllWithStoragePath) {
+    const { error: dbError } = await supabase.from("exercise_videos").delete().eq("storage_path", storagePath);
+    if (dbError) throw new Error(dbError.message);
+    await supabase.storage.from("trainer-videos").remove([storagePath]);
+  } else {
+    const { error: dbError } = await supabase.from("exercise_videos").delete().eq("id", videoId);
+    if (dbError) throw new Error(dbError.message);
+
+    // Check if any other records share this storage path before removing from storage bucket
+    const { data: remaining } = await supabase
+      .from("exercise_videos")
+      .select("id")
+      .eq("storage_path", storagePath)
+      .limit(1);
+
+    if (!remaining || remaining.length === 0) {
+      await supabase.storage.from("trainer-videos").remove([storagePath]);
+    }
+  }
+}
+
+export async function distributeExerciseVideo(params: {
+  trainerId: string;
+  file?: File;
+  existingStoragePath?: string;
+  fileSizeBytes?: number;
+  mimeType?: string;
+  durationSeconds?: number;
+  customerIds: string[];
+  title: string;
+  description?: string;
+}): Promise<{ successful: string[]; failed: Array<{ customerId: string; error: string }> }> {
+  const successful: string[] = [];
+  const failed: Array<{ customerId: string; error: string }> = [];
+
+  let storagePath = params.existingStoragePath;
+  let fileSizeBytes = params.fileSizeBytes || null;
+  let mimeType = params.mimeType || "video/mp4";
+
+  if (params.file) {
+    if (!ALLOWED_VIDEO_MIME_TYPES.includes(params.file.type)) {
+      throw new Error("Invalid video format. Supported formats: MP4, WebM, QuickTime, OGG.");
+    }
+    if (params.file.size > MAX_VIDEO_BYTES) {
+      throw new Error("Video file size exceeds the 50MB limit.");
+    }
+
+    const rawExt = (params.file.name.split(".").pop() || "mp4").toLowerCase().replace(/[^a-z0-9]/g, "");
+    const ext = ["mp4", "webm", "mov", "ogg"].includes(rawExt) ? rawExt : "mp4";
+    const timestamp = Date.now();
+    const randomHex = Math.random().toString(36).substring(2, 10);
+    storagePath = `videos/${params.trainerId}/${timestamp}_${randomHex}.${ext}`;
+    fileSizeBytes = params.file.size;
+    mimeType = params.file.type;
+
+    const { error: uploadError } = await supabase.storage
+      .from("trainer-videos")
+      .upload(storagePath, params.file, {
+        cacheControl: "3600",
+        upsert: false,
+        contentType: params.file.type,
+      });
+
+    if (uploadError) {
+      console.error("Video storage upload error:", uploadError);
+      throw new Error(`Upload failed: ${uploadError.message}`);
+    }
+  }
+
+  if (!storagePath) {
+    throw new Error("No video file or existing storage path provided.");
+  }
+
+  // If customerIds is empty, we insert with customer_id = null (broadcast to all assigned members)
+  const targets: Array<string | null> = params.customerIds.length > 0 ? params.customerIds : [null];
+
+  for (const cid of targets) {
+    try {
+      // Check duplicate
+      let query = ptDb
+        .from("exercise_videos")
+        .select("id")
+        .eq("trainer_id", params.trainerId)
+        .eq("storage_path", storagePath);
+
+      if (cid) {
+        query = query.eq("customer_id", cid);
+      } else {
+        query = query.is("customer_id", null);
+      }
+
+      const { data: existing } = await query.maybeSingle();
+      if (existing) {
+        if (cid) successful.push(cid);
+        continue;
+      }
+
+      const { error: insertError } = await ptDb.from("exercise_videos").insert({
+        trainer_id: params.trainerId,
+        customer_id: cid,
+        title: params.title.trim(),
+        description: params.description?.trim() || null,
+        storage_path: storagePath,
+        file_size_bytes: fileSizeBytes,
+        mime_type: mimeType,
+      });
+
+      if (insertError) throw insertError;
+      if (cid) successful.push(cid);
+    } catch (err: any) {
+      console.error(`Failed to assign video to customer ${cid}:`, err);
+      if (cid) failed.push({ customerId: cid, error: err?.message || "Insert failed" });
+    }
+  }
+
+  return { successful, failed };
 }
 
 // ----------------------------------------------------------------------------
@@ -1107,6 +1651,77 @@ export async function recordMemberProgress(params: {
   return (data as any).id;
 }
 
+export async function deleteMemberProgressRecord(recordId: string): Promise<void> {
+  const { error } = await supabase.from("member_progress_records").delete().eq("id", recordId);
+  if (error) {
+    console.error("deleteMemberProgressRecord error:", error);
+    throw new Error(error.message);
+  }
+}
+
+export async function fetchTrainerMemberProgress(trainerId: string): Promise<MemberProgressRecord[]> {
+  const { data, error } = await supabase
+    .from("member_progress_records")
+    .select(`
+      id,
+      customer_id,
+      trainer_id,
+      recorded_date,
+      weight_kg,
+      body_fat_percentage,
+      chest_cm,
+      waist_cm,
+      hips_cm,
+      arms_cm,
+      thighs_cm,
+      bench_press_max_kg,
+      squat_max_kg,
+      deadlift_max_kg,
+      workout_performance,
+      notes,
+      created_at,
+      customers:customer_id (
+        id,
+        first_name,
+        last_name,
+        customer_code
+      )
+    `)
+    .eq("trainer_id", trainerId)
+    .order("recorded_date", { ascending: false });
+
+  if (error) {
+    console.error("fetchTrainerMemberProgress error:", error);
+    throw new Error(error.message);
+  }
+
+  return (data || []).map((r: any) => {
+    const cust = r.customers ? (Array.isArray(r.customers) ? r.customers[0] : r.customers) : null;
+    return {
+      id: r.id,
+      customerId: r.customer_id,
+      customer_id: r.customer_id,
+      customerName: cust ? `${cust.first_name || ""} ${cust.last_name || ""}`.trim() : null,
+      customerCode: cust ? cust.customer_code : null,
+      trainerId: r.trainer_id,
+      recordedDate: r.recorded_date,
+      weightKg: r.weight_kg ? Number(r.weight_kg) : null,
+      bodyFatPercentage: r.body_fat_percentage ? Number(r.body_fat_percentage) : null,
+      chestCm: r.chest_cm ? Number(r.chest_cm) : null,
+      waistCm: r.waist_cm ? Number(r.waist_cm) : null,
+      hipsCm: r.hips_cm ? Number(r.hips_cm) : null,
+      armsCm: r.arms_cm ? Number(r.arms_cm) : null,
+      thighsCm: r.thighs_cm ? Number(r.thighs_cm) : null,
+      benchPressMaxKg: r.bench_press_max_kg ? Number(r.bench_press_max_kg) : null,
+      squatMaxKg: r.squat_max_kg ? Number(r.squat_max_kg) : null,
+      deadliftMaxKg: r.deadlift_max_kg ? Number(r.deadlift_max_kg) : null,
+      workoutPerformance: r.workout_performance || null,
+      notes: r.notes || null,
+      createdAt: r.created_at,
+    };
+  });
+}
+
 // ----------------------------------------------------------------------------
 // 8. Completed 1-on-1 Personal Training Sessions (Attendance Integration)
 // ----------------------------------------------------------------------------
@@ -1136,6 +1751,57 @@ export async function fetchMemberPTSessions(customerId: string): Promise<Persona
     status: row.status,
     createdAt: row.created_at,
   }));
+}
+
+export async function fetchTrainerPTSessions(trainerId: string): Promise<PersonalTrainingSession[]> {
+  const { data, error } = await ptDb
+    .from("personal_training_sessions")
+    .select(`
+      id,
+      customer_id,
+      trainer_id,
+      session_date,
+      start_time,
+      end_time,
+      duration_minutes,
+      session_focus,
+      performance_notes,
+      status,
+      created_at,
+      customers:customer_id (
+        id,
+        first_name,
+        last_name,
+        customer_code
+      )
+    `)
+    .eq("trainer_id", trainerId)
+    .order("session_date", { ascending: false });
+
+  if (error) {
+    console.error("fetchTrainerPTSessions error:", error);
+    throw new Error(error.message);
+  }
+
+  return (data || []).map((row: any) => {
+    const cust = row.customers ? (Array.isArray(row.customers) ? row.customers[0] : row.customers) : null;
+    return {
+      id: row.id,
+      customerId: row.customer_id,
+      customer_id: row.customer_id,
+      customerName: cust ? `${cust.first_name || ""} ${cust.last_name || ""}`.trim() : null,
+      customerCode: cust ? cust.customer_code : null,
+      trainerId: row.trainer_id,
+      sessionDate: row.session_date,
+      startTime: row.start_time,
+      endTime: row.end_time,
+      durationMinutes: Number(row.duration_minutes) || 60,
+      sessionFocus: row.session_focus,
+      performanceNotes: row.performance_notes,
+      status: row.status,
+      createdAt: row.created_at,
+    };
+  });
 }
 
 export async function recordPersonalTrainingSession(params: {
@@ -1261,3 +1927,473 @@ export type PersonalTrainingSessionItem = PersonalTrainingSession;
 
 export const getVideoSignedUrl = getExerciseVideoSignedUrl;
 export type TrainerDashboardOverviewResult = TrainerDashboardOverview;
+
+// ----------------------------------------------------------------------------
+// Reception Trainers Directory & Password Reset
+// ----------------------------------------------------------------------------
+export interface ReceptionTrainerAssignedMember {
+  id: string;
+  customerId: string;
+  customerCode: string;
+  customerName: string;
+  phone: string;
+  category: CustomerCategory;
+  customerStatus: string;
+  assignmentStatus: string;
+  startDate: string;
+  endDate: string | null;
+  planName: string;
+  membershipStatus: string;
+  membershipEnd: string | null;
+}
+
+export interface ReceptionTrainerRecord {
+  id: string;
+  userId: string;
+  fullName: string;
+  phone: string;
+  specialization: string;
+  isActive: boolean;
+  loginId: string | null;
+  email: string | null;
+  activeMembersCount: number;
+  assignedMembers: ReceptionTrainerAssignedMember[];
+}
+
+export async function fetchReceptionTrainersDirectory(): Promise<ReceptionTrainerRecord[]> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { data, error } = await (supabase as any).rpc("get_reception_trainers_directory");
+  if (error) {
+    console.error("get_reception_trainers_directory error:", error);
+    throw new Error(error.message || "Failed to load trainers directory.");
+  }
+
+  const rawTrainers = data?.trainers || [];
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return rawTrainers.map((t: any) => ({
+    id: t.id,
+    userId: t.user_id,
+    fullName: t.full_name,
+    phone: t.phone || "",
+    specialization: t.specialization || "Fitness Trainer",
+    isActive: Boolean(t.is_active),
+    loginId: t.login_id || null,
+    email: t.email || null,
+    activeMembersCount: Number(t.active_members_count) || 0,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    assignedMembers: (t.assigned_members || []).map((m: any) => ({
+      id: m.id,
+      customerId: m.customer_id,
+      customerCode: m.customer_code,
+      customerName: m.customer_name,
+      phone: m.phone || "",
+      category: m.category as CustomerCategory,
+      customerStatus: m.customer_status || "ACTIVE",
+      assignmentStatus: m.assignment_status || "ACTIVE",
+      startDate: m.start_date,
+      endDate: m.end_date || null,
+      planName: m.plan_name || "Standard Membership",
+      membershipStatus: m.membership_status || "INACTIVE",
+      membershipEnd: m.membership_end || null,
+    })),
+  }));
+}
+
+export async function receptionResetTrainerPassword(
+  trainerId: string
+): Promise<{
+  success: boolean;
+  trainerId: string;
+  trainerName: string;
+  loginId: string;
+  newTempPassword: string;
+}> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { data, error } = await (supabase as any).rpc("reception_reset_trainer_password", {
+    p_trainer_id: trainerId,
+  });
+
+  if (error) {
+    console.error("reception_reset_trainer_password error:", error);
+    throw new Error(error.message || "Failed to reset trainer password.");
+  }
+
+  return {
+    success: Boolean(data?.success),
+    trainerId: data?.trainer_id,
+    trainerName: data?.trainer_name,
+    loginId: data?.login_id,
+    newTempPassword: data?.new_temp_password,
+  };
+}
+
+// ----------------------------------------------------------------------------
+// Customer Portal: My Trainer Page Services
+// ----------------------------------------------------------------------------
+export interface CustomerActiveTrainerInfo {
+  assignmentId: string;
+  customerId: string;
+  trainerId: string;
+  fullName: string;
+  firstName: string;
+  lastName: string;
+  phone: string;
+  email: string | null;
+  loginId: string | null;
+  specialization: string;
+  status: string;
+  startDate: string;
+  endDate: string | null;
+  monthlyFee: number;
+  notes: string | null;
+}
+
+export interface CustomerMyTrainerBundle {
+  hasActiveTrainer: boolean;
+  trainer: CustomerActiveTrainerInfo | null;
+  workoutPlans: WorkoutPlan[];
+  mealPlans: MealPlan[];
+  exerciseVideos: ExerciseVideo[];
+  progressRecords: MemberProgressRecord[];
+  coachingNotes: Array<{
+    id: string;
+    sessionId?: string;
+    sessionDate: string;
+    workoutFocus: string;
+    notes: string;
+    createdAt: string;
+  }>;
+}
+
+/**
+ * Checks if a customer has an active personal trainer assignment in Supabase.
+ * Returns the active trainer information, or null if no active assignment exists.
+ */
+export async function fetchCustomerActiveTrainer(
+  customerId: string
+): Promise<CustomerActiveTrainerInfo | null> {
+  if (!customerId) return null;
+
+  try {
+    // 1. Try atomic database RPC
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: rpcData, error: rpcError } = await (supabase as any).rpc(
+      "get_customer_active_trainer",
+      { p_customer_id: customerId }
+    );
+
+    if (!rpcError && rpcData) {
+      if (!rpcData.has_active_trainer) {
+        return null;
+      }
+      return {
+        assignmentId: rpcData.assignment_id,
+        customerId: rpcData.customer_id,
+        trainerId: rpcData.trainer_id,
+        fullName: rpcData.full_name || "Assigned Trainer",
+        firstName: rpcData.first_name || "",
+        lastName: rpcData.last_name || "",
+        phone: rpcData.phone || "",
+        email: rpcData.email || null,
+        loginId: rpcData.login_id || null,
+        specialization: rpcData.specialization || "Fitness Trainer",
+        status: rpcData.status || "ACTIVE",
+        startDate: rpcData.start_date,
+        endDate: rpcData.end_date || null,
+        monthlyFee: Number(rpcData.monthly_fee) || 0,
+        notes: rpcData.notes || null,
+      };
+    }
+
+    // 2. Fallback to direct table query
+    const { data, error } = await supabase
+      .from("trainer_assignments")
+      .select(`
+        id,
+        customer_id,
+        trainer_id,
+        status,
+        monthly_fee_at_assignment,
+        start_date,
+        end_date,
+        notes,
+        trainer_profiles:trainer_id (
+          id,
+          user_id,
+          first_name,
+          last_name,
+          phone,
+          specialization,
+          is_active
+        )
+      `)
+      .eq("customer_id", customerId)
+      .eq("status", "ACTIVE")
+      .order("start_date", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (error || !data) {
+      return null;
+    }
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const row = data as any;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const tp = row?.trainer_profiles as any;
+    const fullName = tp ? `${tp.first_name || ""} ${tp.last_name || ""}`.trim() : "Assigned Trainer";
+
+    return {
+      assignmentId: row.id,
+      customerId: row.customer_id,
+      trainerId: row.trainer_id,
+      fullName: fullName || "Personal Trainer",
+      firstName: tp?.first_name || "",
+      lastName: tp?.last_name || "",
+      phone: tp?.phone || "",
+      email: null,
+      loginId: null,
+      specialization: tp?.specialization || "Fitness Trainer",
+      status: row.status,
+      startDate: row.start_date,
+      endDate: row.end_date,
+      monthlyFee: Number(row.monthly_fee_at_assignment) || 0,
+      notes: row.notes,
+    };
+  } catch (err) {
+    console.error("fetchCustomerActiveTrainer exception:", err);
+    return null;
+  }
+}
+
+/**
+ * Loads the complete trainer bundle for the Customer Portal "My Trainer" page.
+ * Returns active trainer details, workout plans with exercises, meal plans with items,
+ * exercise demonstration videos, and progress records.
+ */
+export async function fetchCustomerMyTrainerBundle(
+  customerId: string
+): Promise<CustomerMyTrainerBundle> {
+  if (!customerId) {
+    return {
+      hasActiveTrainer: false,
+      trainer: null,
+      workoutPlans: [],
+      mealPlans: [],
+      exerciseVideos: [],
+      progressRecords: [],
+      coachingNotes: [],
+    };
+  }
+
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: b, error } = await (supabase as any).rpc(
+      "get_customer_my_trainer_bundle",
+      { p_customer_id: customerId }
+    );
+
+    if (!error && b) {
+      if (!b.has_active_trainer || !b.trainer) {
+        return {
+          hasActiveTrainer: false,
+          trainer: null,
+          workoutPlans: [],
+          mealPlans: [],
+          exerciseVideos: [],
+          progressRecords: [],
+          coachingNotes: [],
+        };
+      }
+
+      const tr = b.trainer;
+      const trainerInfo: CustomerActiveTrainerInfo = {
+        assignmentId: tr.assignment_id,
+        customerId: tr.customer_id,
+        trainerId: tr.trainer_id,
+        fullName: tr.full_name || "Assigned Trainer",
+        firstName: tr.first_name || "",
+        lastName: tr.last_name || "",
+        phone: tr.phone || "",
+        email: tr.email || null,
+        loginId: tr.login_id || null,
+        specialization: tr.specialization || "Fitness Trainer",
+        status: tr.status || "ACTIVE",
+        startDate: tr.start_date,
+        endDate: tr.end_date || null,
+        monthlyFee: Number(tr.monthly_fee) || 0,
+        notes: tr.notes || null,
+      };
+
+      // Map workout plans
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const workoutPlans: WorkoutPlan[] = (b.workout_plans || []).map((wp: any) => ({
+        id: wp.id,
+        customerId: wp.customer_id,
+        trainerId: wp.trainer_id,
+        title: wp.title,
+        description: wp.description,
+        startDate: wp.start_date,
+        start_date: wp.start_date,
+        endDate: wp.end_date,
+        end_date: wp.end_date,
+        status: wp.status,
+        isTemplate: false,
+        createdAt: wp.created_at,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        exercises: (wp.exercises || []).map((ex: any) => ({
+          id: ex.id,
+          workoutPlanId: wp.id,
+          dayOfWeek: ex.day_of_week,
+          day_of_week: ex.day_of_week,
+          exerciseName: ex.exercise_name,
+          exercise_name: ex.exercise_name,
+          sets: Number(ex.sets) || 3,
+          reps: ex.reps || 10,
+          durationSeconds: ex.duration_seconds ? Number(ex.duration_seconds) : undefined,
+          duration_seconds: ex.duration_seconds ? Number(ex.duration_seconds) : null,
+          restSeconds: ex.rest_seconds ? Number(ex.rest_seconds) : undefined,
+          rest_interval_seconds: ex.rest_seconds ? Number(ex.rest_seconds) : null,
+          instructions: ex.instructions || "",
+          videoUrl: ex.video_url || undefined,
+          orderIndex: Number(ex.order_index) || 0,
+        })),
+      }));
+
+      // Map meal plans
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const mealPlans: MealPlan[] = (b.meal_plans || []).map((mp: any) => ({
+        id: mp.id,
+        customerId: mp.customer_id,
+        trainerId: mp.trainer_id,
+        title: mp.title,
+        startDate: mp.start_date,
+        start_date: mp.start_date,
+        endDate: mp.end_date,
+        end_date: mp.end_date,
+        dailyCalorieTarget: mp.daily_calorie_target ? Number(mp.daily_calorie_target) : null,
+        daily_calories: mp.daily_calorie_target ? Number(mp.daily_calorie_target) : null,
+        notes: mp.notes,
+        status: mp.status,
+        isTemplate: false,
+        createdAt: mp.created_at,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        items: (mp.items || []).map((it: any) => ({
+          id: it.id,
+          mealPlanId: mp.id,
+          mealType: it.meal_type,
+          meal_type: it.meal_type,
+          foodName: it.food_name,
+          food_name: it.food_name,
+          portion: it.portion || "",
+          calories: it.calories ? Number(it.calories) : undefined,
+          proteinGrams: it.protein_grams ? Number(it.protein_grams) : undefined,
+          carbsGrams: it.carbs_grams ? Number(it.carbs_grams) : undefined,
+          fatsGrams: it.fats_grams ? Number(it.fats_grams) : undefined,
+          nutritionalInstructions: it.nutritional_instructions || undefined,
+          instructions: it.nutritional_instructions || undefined,
+          orderIndex: Number(it.order_index) || 0,
+        })),
+      }));
+
+      // Map exercise videos
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const exerciseVideos: ExerciseVideo[] = (b.exercise_videos || []).map((v: any) => ({
+        id: v.id,
+        trainerId: v.trainer_id,
+        title: v.title,
+        description: v.description,
+        storagePath: v.storage_path,
+        fileSizeBytes: v.file_size_bytes ? Number(v.file_size_bytes) : undefined,
+        mimeType: v.mime_type,
+        durationSeconds: v.duration_seconds ? Number(v.duration_seconds) : undefined,
+        createdAt: v.created_at,
+      }));
+
+      // Map progress records
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const progressRecords: MemberProgressRecord[] = (b.progress_records || []).map((pr: any) => ({
+        id: pr.id,
+        customerId: pr.customer_id,
+        trainerId: pr.trainer_id,
+        recordedDate: pr.recorded_date,
+        weightKg: pr.weight_kg ? Number(pr.weight_kg) : null,
+        bodyFatPercentage: pr.body_fat_percentage ? Number(pr.body_fat_percentage) : null,
+        chestCm: pr.chest_cm ? Number(pr.chest_cm) : null,
+        waistCm: pr.waist_cm ? Number(pr.waist_cm) : null,
+        hipsCm: pr.hips_cm ? Number(pr.hips_cm) : null,
+        armsCm: pr.arms_cm ? Number(pr.arms_cm) : null,
+        thighsCm: pr.thighs_cm ? Number(pr.thighs_cm) : null,
+        benchPressMaxKg: pr.bench_press_max_kg ? Number(pr.bench_press_max_kg) : null,
+        squatMaxKg: pr.squat_max_kg ? Number(pr.squat_max_kg) : null,
+        deadliftMaxKg: pr.deadlift_max_kg ? Number(pr.deadlift_max_kg) : null,
+        workoutPerformance: pr.workout_performance || null,
+        notes: pr.notes || null,
+        createdAt: pr.created_at,
+      }));
+
+      // Map coaching notes
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const coachingNotes = (b.coaching_notes || []).map((cn: any) => ({
+        id: cn.id,
+        sessionDate: cn.session_date,
+        workoutFocus: cn.workout_focus || "Personal Training Session",
+        notes: cn.notes || "",
+        createdAt: cn.created_at,
+      }));
+
+      return {
+        hasActiveTrainer: true,
+        trainer: trainerInfo,
+        workoutPlans,
+        mealPlans,
+        exerciseVideos,
+        progressRecords,
+        coachingNotes,
+      };
+    }
+
+    // Fallback: load separately
+    const activeTrainer = await fetchCustomerActiveTrainer(customerId);
+    if (!activeTrainer) {
+      return {
+        hasActiveTrainer: false,
+        trainer: null,
+        workoutPlans: [],
+        mealPlans: [],
+        exerciseVideos: [],
+        progressRecords: [],
+        coachingNotes: [],
+      };
+    }
+
+    const [workoutPlans, mealPlans, videos, progressRecords] = await Promise.all([
+      fetchMemberWorkoutPlans(customerId).catch(() => []),
+      fetchMemberMealPlans(customerId).catch(() => []),
+      fetchTrainerExerciseVideos(activeTrainer.trainerId).catch(() => []),
+      fetchMemberProgressRecords(customerId).catch(() => []),
+    ]);
+
+    return {
+      hasActiveTrainer: true,
+      trainer: activeTrainer,
+      workoutPlans,
+      mealPlans,
+      exerciseVideos: videos,
+      progressRecords,
+      coachingNotes: [],
+    };
+  } catch (err) {
+    console.error("fetchCustomerMyTrainerBundle error:", err);
+    return {
+      hasActiveTrainer: false,
+      trainer: null,
+      workoutPlans: [],
+      mealPlans: [],
+      exerciseVideos: [],
+      progressRecords: [],
+      coachingNotes: [],
+    };
+  }
+}
+

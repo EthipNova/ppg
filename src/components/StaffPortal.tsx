@@ -1,16 +1,26 @@
 import { useState, useEffect, useCallback } from "react";
+import { useParams, useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
-import { Users, MagnifyingGlass, Lightning, CheckCircle, User, Plus, Clock, Warning, GraduationCap, MoonStars, MusicNotes, Sparkle, Prohibit, Lockers, Camera, X, Key, Copy, GenderMale, GenderFemale } from "@phosphor-icons/react";
+import { Users, MagnifyingGlass, CheckCircle, User, Plus, Clock, Warning, GraduationCap, MoonStars, MusicNotes, Sparkle, Lockers, Camera, X, Key, Copy, GenderMale, GenderFemale } from "@phosphor-icons/react";
 import { useGym, useT, formatETB, addAudit, planAppliesToCategory, categoryLabelOf } from "../context/GymContext";
 import type { CustomerCategory, Member } from "../types";
 import { toast } from "sonner";
 import { ALL_CATEGORIES } from "../constants";
 import LockersManagement from "./LockersManagement";
 import SteamManagement from "./SteamManagement";
-import { searchCustomersForCheckIn, recordAttendanceCheckIn, fetchTodayAttendance, type CheckInCustomer, type AttendanceRecordItem } from "../services/checkInService";
+import ContactMessagesView from "./ContactMessagesView";
+import { searchCustomersForCheckIn, type CheckInCustomer } from "../services/checkInService";
 import { registerMemberByReception } from "../services/memberRegistrationService";
-import { fetchMonthlyTrainerFee, fetchActiveTrainers, type ActiveTrainer } from "../services/personalTrainerService";
-import { ChalkboardTeacher, Info } from "@phosphor-icons/react";
+import {
+  fetchMonthlyTrainerFee,
+  fetchActiveTrainers,
+  type ActiveTrainer,
+  fetchReceptionTrainersDirectory,
+  receptionResetTrainerPassword,
+  type ReceptionTrainerRecord,
+} from "../services/personalTrainerService";
+import { receptionResetCustomerPassword } from "../services/customers";
+import { ChalkboardTeacher, Info, ArrowLeft, Eye } from "@phosphor-icons/react";
 
 const CATEGORY_ICONS: Record<CustomerCategory, typeof Sparkle> = { REGULAR: Sparkle, STUDENT: GraduationCap, MUSLIM: MoonStars, AEROBICS: MusicNotes };
 function CategoryBadge({ category }: { category: CustomerCategory }) {
@@ -19,18 +29,45 @@ function CategoryBadge({ category }: { category: CustomerCategory }) {
   return <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-semibold bg-zinc-800 text-zinc-300"><Icon weight="fill" className="w-3 h-3 text-lime-400" />{categoryLabelOf(state, category)}</span>;
 }
 
-const TABS = ["checkin", "lockers", "steam", "register"] as const;
+const TABS = ["directory", "lockers", "steam", "register", "contact_messages"] as const;
 type Tab = (typeof TABS)[number];
 const TAB_LABEL: Record<Tab, string> = {
-  checkin: "staff.tab.checkin",
+  directory: "staff.tab.directory",
   lockers: "staff.tab.lockers",
   steam: "staff.tab.steam",
   register: "staff.tab.register",
+  contact_messages: "staff.tab.contact_messages",
+};
+
+const TAB_TO_SLUG: Record<Tab, string> = {
+  directory: "dashboard",
+  lockers: "lockers",
+  steam: "steam",
+  register: "register",
+  contact_messages: "contact-messages",
+};
+
+const SLUG_TO_TAB: Record<string, Tab> = {
+  dashboard: "directory",
+  directory: "directory",
+  members: "directory",
+  trainers: "directory",
+  lockers: "lockers",
+  steam: "steam",
+  register: "register",
+  "contact-messages": "contact_messages",
+  contact_messages: "contact_messages",
 };
 
 export default function StaffPortal() {
   const t = useT();
-  const [tab, setTab] = useState<Tab>("checkin");
+  const { section } = useParams<{ section?: string }>();
+  const navigate = useNavigate();
+  const tab: Tab = (section && SLUG_TO_TAB[section.toLowerCase()]) || "directory";
+
+  const handleTabChange = (nextTab: Tab) => {
+    navigate(`/reception/${TAB_TO_SLUG[nextTab]}`);
+  };
 
   return (
     <div className="min-h-[100dvh] bg-zinc-950 text-white p-4 md:p-8">
@@ -39,17 +76,36 @@ export default function StaffPortal() {
           <Users weight="fill" className="w-6 h-6 text-lime-400" />
           <h1 className="text-2xl font-black uppercase tracking-tight">{t("staff.title")}</h1>
         </div>
-        <div className="flex gap-2 mb-8 overflow-x-auto pb-1">
+        {/* Mobile Navigation Dropdown (<640px) */}
+        <div className="block sm:hidden mb-6">
+          <label htmlFor="staff-portal-tab-select" className="sr-only">Select staff section</label>
+          <select
+            id="staff-portal-tab-select"
+            value={tab}
+            onChange={(e) => handleTabChange(e.target.value as Tab)}
+            className="w-full min-h-[44px] bg-zinc-900 border border-zinc-700 rounded-xl px-4 py-2.5 text-sm font-bold text-white focus:outline-none focus:border-lime-400 transition-colors"
+          >
+            {TABS.map((key) => (
+              <option key={key} value={key}>
+                {t(TAB_LABEL[key])}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        {/* Desktop Navigation Tabs (>=640px) */}
+        <div className="hidden sm:flex gap-2 mb-8 overflow-x-auto pb-1">
           {TABS.map(key => (
-            <button key={key} onClick={() => setTab(key)} className={`px-4 py-2 rounded-lg text-sm font-semibold whitespace-nowrap transition-colors ${tab === key ? "bg-lime-400 text-zinc-950" : "bg-zinc-800 text-zinc-300 hover:bg-zinc-700"}`}>{t(TAB_LABEL[key])}</button>
+            <button key={key} onClick={() => handleTabChange(key)} className={`px-4 py-2 rounded-lg text-sm font-semibold whitespace-nowrap transition-colors min-h-[44px] flex items-center ${tab === key ? "bg-lime-400 text-zinc-950 font-bold" : "bg-zinc-800 text-zinc-300 hover:bg-zinc-700"}`}>{t(TAB_LABEL[key])}</button>
           ))}
         </div>
         <AnimatePresence mode="wait">
           <motion.div key={tab} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} transition={{ duration: 0.2 }}>
-            {tab === "checkin" && <CheckInView />}
+            {tab === "directory" && <MemberAndTrainerDirectoryView />}
             {tab === "lockers" && <LockersManagement canManage />}
             {tab === "steam" && <SteamView />}
             {tab === "register" && <RegisterView />}
+            {tab === "contact_messages" && <ContactMessagesView />}
           </motion.div>
         </AnimatePresence>
       </div>
@@ -57,52 +113,86 @@ export default function StaffPortal() {
   );
 }
 
-function CheckInView() {
-  const { state, dispatch } = useGym();
-  const t = useT();
-  const [search, setSearch] = useState("");
-  const [categoryFilter, setCategoryFilter] = useState<CustomerCategory | "ALL">("ALL");
-  const [results, setResults] = useState<CheckInCustomer[]>([]);
-  const [isSearching, setIsSearching] = useState(false);
-  const [todayAttendance, setTodayAttendance] = useState<AttendanceRecordItem[]>([]);
-  const [lastCheckIn, setLastCheckIn] = useState<{ customer: CheckInCustomer; time: string } | null>(null);
-  const [refused, setRefused] = useState<{ customer: CheckInCustomer; reason: string } | null>(null);
-  const actor = state.currentUser?.name || "Reception";
+function MemberAndTrainerDirectoryView() {
+  const { state } = useGym();
 
-  // Load today's actual attendance records from Supabase
-  const loadTodayAttendance = useCallback(async () => {
+  // Sub-tabs: "members" | "trainers"
+  const [subTab, setSubTab] = useState<"members" | "trainers">("members");
+
+  // === MEMBERS TAB STATE ===
+  const [memberSearch, setMemberSearch] = useState("");
+  const [categoryFilter, setCategoryFilter] = useState<CustomerCategory | "ALL">("ALL");
+  const [memberResults, setMemberResults] = useState<CheckInCustomer[]>([]);
+  const [isSearchingMembers, setIsSearchingMembers] = useState(false);
+  const [selectedMember, setSelectedMember] = useState<CheckInCustomer | null>(null);
+
+  // === CUSTOMER PASSWORD RESET STATE ===
+  const [resetConfirmMember, setResetConfirmMember] = useState<CheckInCustomer | null>(null);
+  const [isResettingCustomerPassword, setIsResettingCustomerPassword] = useState(false);
+  const [customerResetSuccessData, setCustomerResetSuccessData] = useState<{
+    customerName: string;
+    customerCode: string;
+    tempPassword: string;
+  } | null>(null);
+  const [copiedCustomerResetField, setCopiedCustomerResetField] = useState<boolean>(false);
+
+  // === TRAINERS TAB STATE ===
+  const [trainerSearch, setTrainerSearch] = useState("");
+  const [trainers, setTrainers] = useState<ReceptionTrainerRecord[]>([]);
+  const [isLoadingTrainers, setIsLoadingTrainers] = useState(false);
+  const [selectedTrainerId, setSelectedTrainerId] = useState<string | null>(null);
+  const selectedTrainer = trainers.find(tr => tr.id === selectedTrainerId) ?? null;
+
+  // === TRAINER PASSWORD RESET STATE ===
+  const [resetConfirmTrainer, setResetConfirmTrainer] = useState<ReceptionTrainerRecord | null>(null);
+  const [isResettingPassword, setIsResettingPassword] = useState(false);
+  const [resetSuccessData, setResetSuccessData] = useState<{
+    trainerName: string;
+    loginId: string;
+    tempPassword: string;
+  } | null>(null);
+  const [copiedResetField, setCopiedResetField] = useState<boolean>(false);
+
+  // Load trainers from Supabase
+  const loadTrainers = useCallback(async () => {
+    setIsLoadingTrainers(true);
     try {
-      const records = await fetchTodayAttendance();
-      setTodayAttendance(records);
+      const data = await fetchReceptionTrainersDirectory();
+      setTrainers(data);
     } catch (err) {
-      console.error("Failed to load today's attendance:", err);
+      console.error("Failed to load trainers directory:", err);
+      toast.error("Unable to load trainers directory from database.");
+    } finally {
+      setIsLoadingTrainers(false);
     }
   }, []);
 
   useEffect(() => {
-    void loadTodayAttendance();
-  }, [loadTodayAttendance]);
+    if (subTab === "trainers") {
+      void loadTrainers();
+    }
+  }, [subTab, loadTrainers]);
 
-  // Search for customers in Supabase (debounced for input, immediate on category toggle)
+  // Search members in Supabase (debounced for input, immediate on category toggle)
   useEffect(() => {
     let active = true;
-    const q = search.trim();
+    const q = memberSearch.trim();
 
-    setIsSearching(true);
+    setIsSearchingMembers(true);
     const delay = q ? 200 : 0;
     const timer = setTimeout(async () => {
       try {
         const data = await searchCustomersForCheckIn(q, categoryFilter);
         if (active) {
-          setResults(data);
+          setMemberResults(data);
         }
       } catch (err) {
         if (active) {
-          console.error("Check-in customer search failed:", err);
-          toast.error("Unable to search customers from database.");
+          console.error("Customer directory search failed:", err);
+          toast.error("Unable to search members from database.");
         }
       } finally {
-        if (active) setIsSearching(false);
+        if (active) setIsSearchingMembers(false);
       }
     }, delay);
 
@@ -110,73 +200,54 @@ function CheckInView() {
       active = false;
       clearTimeout(timer);
     };
-  }, [search, categoryFilter]);
+  }, [memberSearch, categoryFilter]);
 
-  // Execute check-in operation against Supabase attendance table
-  const executeCheckIn = async (customer: CheckInCustomer, overrideReason?: string) => {
+  // Handler for Trainer Password Reset
+  const handleExecuteResetPassword = async () => {
+    if (!resetConfirmTrainer) return;
+    setIsResettingPassword(true);
     try {
-      const result = await recordAttendanceCheckIn(customer, actor, overrideReason);
-      const timeStr = new Date(result.checkedInAt).toLocaleTimeString();
-      setLastCheckIn({ customer, time: timeStr });
-      setRefused(null);
-      await loadTodayAttendance();
-
-      // Refresh customer list to show updated attendance state
-      const updatedList = await searchCustomersForCheckIn(search.trim(), categoryFilter);
-      setResults(updatedList);
-
-      // Audit and notify
-      addAudit(
-        dispatch,
-        overrideReason ? "Check-in (override)" : "Check-in",
-        actor,
-        `${customer.fullName} (${customer.customerCode}) · ${categoryLabelOf(state, customer.category)}`
-      );
-      toast.success(t("staff.checkedIn", { name: customer.fullName }));
-    } catch (cause) {
-      console.error("Check-in recording failed:", cause);
-      toast.error(cause instanceof Error ? cause.message : "Failed to record check-in.");
+      const result = await receptionResetTrainerPassword(resetConfirmTrainer.id);
+      setResetSuccessData({
+        trainerName: result.trainerName,
+        loginId: result.loginId,
+        tempPassword: result.newTempPassword,
+      });
+      setResetConfirmTrainer(null);
+      toast.success(`Temporary password generated for Coach ${result.trainerName}`);
+      void loadTrainers();
+    } catch (err) {
+      console.error("Password reset failed:", err);
+      toast.error(err instanceof Error ? err.message : "Failed to reset trainer password.");
+    } finally {
+      setIsResettingPassword(false);
     }
   };
 
-  const handleCheckInClick = (customer: CheckInCustomer) => {
-    // 1. Student verification check
-    if (customer.category === "STUDENT" && customer.studentVerified !== true) {
-      const reason = "Student verification is pending; reception must approve student documents before gym access.";
-      addAudit(dispatch, "Access denied", actor, `${customer.fullName} · ${reason}`);
-      setRefused({ customer, reason });
-      toast.error(reason);
-      return;
+  // Handler for Customer Password Reset
+  const handleExecuteCustomerResetPassword = async () => {
+    if (!resetConfirmMember) return;
+    setIsResettingCustomerPassword(true);
+    try {
+      const result = await receptionResetCustomerPassword(resetConfirmMember.id);
+      setCustomerResetSuccessData({
+        customerName: result.customerName,
+        customerCode: result.customerCode,
+        tempPassword: result.newTempPassword,
+      });
+      setResetConfirmMember(null);
+      setCopiedCustomerResetField(false);
+      toast.success(`Temporary password generated for ${result.customerName}`);
+    } catch (err) {
+      console.error("Customer password reset failed:", err);
+      toast.error(err instanceof Error ? err.message : "Failed to reset customer password.");
+    } finally {
+      setIsResettingCustomerPassword(false);
     }
-
-    // 2. Blocked customer status
-    if (customer.status === "BLOCKED") {
-      const reason = `Customer account is BLOCKED by management.`;
-      addAudit(dispatch, "Access denied", actor, `${customer.fullName} · ${reason}`);
-      setRefused({ customer, reason });
-      toast.error(reason);
-      return;
-    }
-
-    // 3. Expired or inactive membership validation
-    const membership = customer.membership;
-    if (!membership || membership.isExpired || customer.status === "INACTIVE") {
-      const reason = !membership
-        ? "No active membership plan on record in database."
-        : membership.endDate
-        ? `Membership expired on ${membership.endDate}.`
-        : "Membership is currently inactive.";
-      addAudit(dispatch, "Access denied", actor, `${customer.fullName} · ${reason}`);
-      setRefused({ customer, reason });
-      toast.error(`Membership Warning: ${reason}`);
-      return;
-    }
-
-    // 4. Valid active customer
-    void executeCheckIn(customer);
   };
 
-  const renderStatusBadge = (customer: CheckInCustomer) => {
+
+  const renderMemberStatusBadge = (customer: CheckInCustomer) => {
     if (customer.status === "BLOCKED") {
       return <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-purple-400/20 text-purple-400">Blocked</span>;
     }
@@ -190,245 +261,884 @@ function CheckInView() {
     return <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-lime-400/20 text-lime-400">Active</span>;
   };
 
+  // Filter trainers based on search input
+  const filteredTrainers = trainers.filter(tr => {
+    if (!trainerSearch.trim()) return true;
+    const term = trainerSearch.toLowerCase().trim();
+    return (
+      tr.fullName.toLowerCase().includes(term) ||
+      (tr.loginId && tr.loginId.toLowerCase().includes(term)) ||
+      tr.specialization.toLowerCase().includes(term) ||
+      tr.phone.toLowerCase().includes(term)
+    );
+  });
+
   return (
     <div className="space-y-6">
-      {/* Search Input */}
-      <div className="relative">
-        <MagnifyingGlass className="w-6 h-6 text-zinc-500 absolute left-4 top-1/2 -translate-y-1/2" />
-        <input
-          value={search}
-          onChange={e => setSearch(e.target.value)}
-          placeholder={t("staff.searchPlaceholder")}
-          className="w-full bg-zinc-900 border border-zinc-800 rounded-2xl pl-12 pr-4 py-4 text-white text-lg placeholder:text-zinc-500 focus:outline-none focus:border-lime-400/50"
-          autoFocus
-        />
-        {isSearching && (
-          <div className="absolute right-4 top-1/2 -translate-y-1/2 text-xs font-semibold text-zinc-400 flex items-center gap-1.5">
-            <Clock className="w-4 h-4 animate-spin text-lime-400" />
-            <span>Searching Supabase...</span>
-          </div>
-        )}
-      </div>
-
-      {/* Category Filter Pills */}
-      <div className="flex flex-wrap gap-2">
+      {/* Sub-tab Navigation: Members vs Trainers */}
+      <div className="grid grid-cols-2 sm:flex sm:items-center gap-2 sm:gap-3 border-b border-zinc-800 pb-4">
         <button
-          onClick={() => setCategoryFilter("ALL")}
-          className={`px-3 py-1.5 rounded-full text-xs font-semibold transition-colors ${
-            categoryFilter === "ALL" ? "bg-lime-400 text-zinc-950 font-bold" : "bg-zinc-800 text-zinc-300 hover:bg-zinc-700"
+          onClick={() => {
+            setSubTab("members");
+            setSelectedTrainerId(null);
+          }}
+          className={`min-h-[44px] flex items-center justify-center gap-2 px-4 sm:px-5 py-2.5 rounded-xl text-sm font-bold transition-all ${
+            subTab === "members"
+              ? "bg-lime-400 text-zinc-950 shadow-md shadow-lime-400/15"
+              : "bg-zinc-900 text-zinc-400 hover:text-white hover:bg-zinc-850"
           }`}
         >
-          {t("staff.allCategories")}
-        </button>
-        {state.categoryLabels.map(c => (
-          <button
-            key={c.category}
-            onClick={() => setCategoryFilter(c.category)}
-            className={`px-3 py-1.5 rounded-full text-xs font-semibold transition-colors ${
-              categoryFilter === c.category ? "bg-lime-400 text-zinc-950 font-bold" : "bg-zinc-800 text-zinc-300 hover:bg-zinc-700"
+          <Users weight={subTab === "members" ? "fill" : "bold"} className="w-4 h-4 shrink-0" />
+          <span>Members</span>
+          <span
+            className={`text-xs px-2 py-0.5 rounded-full font-mono font-semibold ${
+              subTab === "members" ? "bg-zinc-950 text-lime-400" : "bg-zinc-800 text-zinc-400"
             }`}
           >
-            {c.label}
-          </button>
-        ))}
+            {memberResults.length}
+          </span>
+        </button>
+
+        <button
+          onClick={() => {
+            setSubTab("trainers");
+          }}
+          className={`min-h-[44px] flex items-center justify-center gap-2 px-4 sm:px-5 py-2.5 rounded-xl text-sm font-bold transition-all ${
+            subTab === "trainers"
+              ? "bg-lime-400 text-zinc-950 shadow-md shadow-lime-400/15"
+              : "bg-zinc-900 text-zinc-400 hover:text-white hover:bg-zinc-850"
+          }`}
+        >
+          <ChalkboardTeacher weight={subTab === "trainers" ? "fill" : "bold"} className="w-4 h-4 shrink-0" />
+          <span>Trainers</span>
+          <span
+            className={`text-xs px-2 py-0.5 rounded-full font-mono font-semibold ${
+              subTab === "trainers" ? "bg-zinc-950 text-lime-400" : "bg-zinc-800 text-zinc-400"
+            }`}
+          >
+            {trainers.length}
+          </span>
+        </button>
       </div>
 
-      {/* Refused / Warning Prompt with Override Action */}
-      {refused && (
-        <div className="bg-red-400/10 border border-red-400/30 rounded-2xl p-4 space-y-3">
-          <div className="flex items-start gap-3">
-            <Prohibit weight="fill" className="w-8 h-8 text-red-400 shrink-0 mt-0.5" />
-            <div>
-              <div className="font-bold text-red-400 text-base">
-                {t("staff.accessDenied")} — {refused.customer.fullName} ({refused.customer.customerCode})
+      {/* ==================================================================== */}
+      {/* 1. MEMBERS SUB-TAB                                                    */}
+      {/* ==================================================================== */}
+      {subTab === "members" && (
+        <div className="space-y-6">
+          {/* Search Input */}
+          <div className="relative">
+            <MagnifyingGlass className="w-6 h-6 text-zinc-500 absolute left-4 top-1/2 -translate-y-1/2" />
+            <input
+              value={memberSearch}
+              onChange={e => setMemberSearch(e.target.value)}
+              placeholder="Search members by name, phone or Member ID (e.g. P-0001)..."
+              className="w-full bg-zinc-900 border border-zinc-800 rounded-2xl pl-12 pr-4 py-4 text-white text-lg placeholder:text-zinc-500 focus:outline-none focus:border-lime-400/50"
+            />
+            {isSearchingMembers && (
+              <div className="absolute right-4 top-1/2 -translate-y-1/2 text-xs font-semibold text-zinc-400 flex items-center gap-1.5">
+                <Clock className="w-4 h-4 animate-spin text-lime-400" />
+                <span>Searching database...</span>
               </div>
-              <div className="text-sm text-zinc-300 mt-0.5">{refused.reason}</div>
-              <div className="text-xs text-zinc-400 mt-1">
-                Plan: {refused.customer.membership?.planName || "None"} · Expiration: {refused.customer.membership?.endDate || "N/A"}
+            )}
+          </div>
+
+          {/* Category Filter Pills */}
+          <div className="flex flex-wrap gap-2">
+            <button
+              onClick={() => setCategoryFilter("ALL")}
+              className={`px-3 py-1.5 rounded-full text-xs font-semibold transition-colors ${
+                categoryFilter === "ALL" ? "bg-lime-400 text-zinc-950 font-bold" : "bg-zinc-800 text-zinc-300 hover:bg-zinc-700"
+              }`}
+            >
+              All Categories
+            </button>
+            {state.categoryLabels.map(c => (
+              <button
+                key={c.category}
+                onClick={() => setCategoryFilter(c.category)}
+                className={`px-3 py-1.5 rounded-full text-xs font-semibold transition-colors ${
+                  categoryFilter === c.category ? "bg-lime-400 text-zinc-950 font-bold" : "bg-zinc-800 text-zinc-300 hover:bg-zinc-700"
+                }`}
+              >
+                {c.label}
+              </button>
+            ))}
+          </div>
+
+          {/* Member Results List */}
+          {memberResults.length > 0 && (
+            <div className="space-y-3">
+              <div className="flex items-center justify-between text-xs text-zinc-400 font-semibold px-1">
+                <span>
+                  {memberSearch
+                    ? `Search results for "${memberSearch}"`
+                    : categoryFilter === "ALL"
+                    ? "Registered Members"
+                    : `${categoryLabelOf(state, categoryFilter)} Members`}
+                </span>
+                <span className="bg-zinc-800 text-lime-400 px-2 py-0.5 rounded-full font-mono">
+                  {memberResults.length} member{memberResults.length === 1 ? "" : "s"}
+                </span>
+              </div>
+
+              <div className="space-y-2">
+                {memberResults.map(c => {
+                  const isMemExpired = !c.membership || c.membership.isExpired;
+                  return (
+                    <motion.div
+                      key={c.id}
+                      initial={{ opacity: 0, x: -10 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4 hover:border-zinc-700 transition-colors"
+                    >
+                      <div className="flex items-start sm:items-center gap-4">
+                        <div className="w-12 h-12 bg-zinc-800 rounded-full flex items-center justify-center shrink-0">
+                          <User className="w-6 h-6 text-zinc-400" />
+                        </div>
+                        <div className="space-y-1">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="font-bold text-white text-base">{c.fullName}</span>
+                            <span className="font-mono text-xs px-2 py-0.5 rounded bg-zinc-800 text-lime-400 font-semibold">
+                              {c.customerCode}
+                            </span>
+                            {renderMemberStatusBadge(c)}
+                            <CategoryBadge category={c.category} />
+                            {c.gender && (
+                              <span className="px-2 py-0.5 rounded-full text-[11px] font-semibold bg-zinc-800 text-zinc-300">
+                                {c.gender}
+                              </span>
+                            )}
+                            {c.activeLockerNumber && (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-amber-400/15 text-amber-400 border border-amber-400/20">
+                                <Lockers weight="fill" className="w-3 h-3" />
+                                Locker {c.activeLockerNumber}
+                              </span>
+                            )}
+                          </div>
+                          <div className="text-xs text-zinc-400 flex flex-wrap items-center gap-3">
+                            <span>Phone: <strong className="text-zinc-200">{c.phone}</strong></span>
+                            <span>·</span>
+                            <span>Plan: <strong className="text-zinc-200">{c.membership?.planName || "No Plan"}</strong></span>
+                            {c.membership?.startDate && c.membership?.endDate && (
+                              <>
+                                <span>·</span>
+                                <span className={isMemExpired ? "text-red-400 font-semibold" : "text-zinc-400"}>
+                                  Validity: {c.membership.startDate} to {c.membership.endDate}
+                                </span>
+                              </>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-2 self-end sm:self-center shrink-0">
+                        <button
+                          onClick={() => setResetConfirmMember(c)}
+                          className="px-3 py-2 rounded-xl text-xs font-bold bg-amber-400/10 text-amber-300 hover:bg-amber-400 hover:text-zinc-950 border border-amber-400/25 transition-all flex items-center gap-1.5"
+                          title="Reset customer login password"
+                        >
+                          <Key weight="bold" className="w-3.5 h-3.5" />
+                          <span>Reset Password</span>
+                        </button>
+                        <button
+                          onClick={() => setSelectedMember(c)}
+                          className="px-4 py-2 rounded-xl text-xs font-bold bg-zinc-800 text-zinc-200 hover:text-white hover:bg-zinc-700 transition-colors flex items-center gap-1.5"
+                        >
+                          <Eye className="w-4 h-4" />
+                          <span>View Profile</span>
+                        </button>
+                      </div>
+                    </motion.div>
+                  );
+                })}
               </div>
             </div>
-          </div>
-          <div className="flex gap-2 pt-1">
-            <button
-              onClick={() => {
-                const note = window.prompt("Reason for receptionist override (required):", "Emergency entry permitted by reception");
-                if (!note?.trim()) return;
-                void executeCheckIn(refused.customer, note.trim());
-              }}
-              className="flex-1 bg-lime-400 text-zinc-950 font-bold text-sm py-2.5 rounded-xl hover:bg-lime-300 transition-colors"
-            >
-              {t("staff.allowOverride")}
-            </button>
-            <button
-              onClick={() => setRefused(null)}
-              className="flex-1 bg-zinc-800 text-zinc-200 font-semibold text-sm py-2.5 rounded-xl hover:bg-zinc-700 transition-colors"
-            >
-              {t("common.cancel")}
-            </button>
-          </div>
+          )}
+
+          {/* Empty States */}
+          {!isSearchingMembers && memberResults.length === 0 && (
+            <div className="text-center py-12 text-zinc-500 bg-zinc-900/50 border border-zinc-800/80 rounded-2xl">
+              <Warning className="w-12 h-12 mx-auto mb-3 text-zinc-600" />
+              <p className="font-semibold text-white text-base">
+                {memberSearch ? "No members found" : "No members found in this category"}
+              </p>
+              <p className="text-sm mt-1">
+                {memberSearch
+                  ? "Try searching by a different name, phone number or Member ID."
+                  : "No customers match the selected filter. Try searching by name, phone, or Member ID."}
+              </p>
+            </div>
+          )}
         </div>
       )}
 
-      {/* Last Successful Check-In Banner */}
-      {lastCheckIn && (
-        <motion.div
-          initial={{ scale: 0.95, opacity: 0 }}
-          animate={{ scale: 1, opacity: 1 }}
-          className="bg-lime-400/10 border border-lime-400/30 rounded-2xl p-4 flex items-center gap-4"
-        >
-          <CheckCircle weight="fill" className="w-8 h-8 text-lime-400 shrink-0" />
-          <div>
-            <div className="font-bold text-lime-400 text-base">
-              {t("staff.checkedIn", { name: lastCheckIn.customer.fullName })}
-            </div>
-            <div className="text-sm text-zinc-400">
-              {lastCheckIn.time} · Member ID: {lastCheckIn.customer.customerCode} · Category: {categoryLabelOf(state, lastCheckIn.customer.category)}
-            </div>
-          </div>
-        </motion.div>
-      )}
+      {/* ==================================================================== */}
+      {/* 2. TRAINERS SUB-TAB                                                   */}
+      {/* ==================================================================== */}
+      {subTab === "trainers" && (
+        <div className="space-y-6">
+          {!selectedTrainer ? (
+            /* TRAINERS DIRECTORY LIST VIEW */
+            <div className="space-y-6">
+              {/* Trainer Search Bar */}
+              <div className="relative">
+                <MagnifyingGlass className="w-6 h-6 text-zinc-500 absolute left-4 top-1/2 -translate-y-1/2" />
+                <input
+                  value={trainerSearch}
+                  onChange={e => setTrainerSearch(e.target.value)}
+                  placeholder="Search trainers by name, phone, specialization, or Login ID..."
+                  className="w-full bg-zinc-900 border border-zinc-800 rounded-2xl pl-12 pr-4 py-4 text-white text-lg placeholder:text-zinc-500 focus:outline-none focus:border-lime-400/50"
+                />
+                {isLoadingTrainers && (
+                  <div className="absolute right-4 top-1/2 -translate-y-1/2 text-xs font-semibold text-zinc-400 flex items-center gap-1.5">
+                    <Clock className="w-4 h-4 animate-spin text-lime-400" />
+                    <span>Loading trainers...</span>
+                  </div>
+                )}
+              </div>
 
-      {/* Member Results List */}
-      {results.length > 0 && (
-        <div className="space-y-3">
-          <div className="flex items-center justify-between text-xs text-zinc-400 font-semibold px-1">
-            <span>
-              {search
-                ? `Search results for "${search}"`
-                : categoryFilter === "ALL"
-                ? "Registered Members"
-                : `${categoryLabelOf(state, categoryFilter)} Members`}
-            </span>
-            <span className="bg-zinc-800 text-lime-400 px-2 py-0.5 rounded-full font-mono">
-              {results.length} member{results.length === 1 ? "" : "s"}
-            </span>
-          </div>
+              {/* Trainers Count Badge */}
+              <div className="flex items-center justify-between text-xs text-zinc-400 font-semibold px-1">
+                <span>Registered Personal Trainers</span>
+                <span className="bg-zinc-800 text-lime-400 px-2 py-0.5 rounded-full font-mono">
+                  {filteredTrainers.length} trainer{filteredTrainers.length === 1 ? "" : "s"}
+                </span>
+              </div>
 
-          <div className="space-y-2">
-            {results.map(c => {
-              const isMemExpired = !c.membership || c.membership.isExpired;
-              const isBlocked = c.status === "BLOCKED";
-              return (
-                <motion.div
-                  key={c.id}
-                  initial={{ opacity: 0, x: -10 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4 hover:border-zinc-700 transition-colors"
-                >
-                  <div className="flex items-start sm:items-center gap-4">
-                    <div className="w-12 h-12 bg-zinc-800 rounded-full flex items-center justify-center shrink-0">
-                      <User className="w-6 h-6 text-zinc-400" />
-                    </div>
-                    <div className="space-y-1">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className="font-bold text-white text-base">{c.fullName}</span>
-                        <span className="font-mono text-xs px-2 py-0.5 rounded bg-zinc-800 text-lime-400 font-semibold">
-                          {c.customerCode}
-                        </span>
-                        {renderStatusBadge(c)}
-                        <CategoryBadge category={c.category} />
-                        {c.activeLockerNumber && (
-                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-amber-400/15 text-amber-400 border border-amber-400/20">
-                            <Lockers weight="fill" className="w-3 h-3" />
-                            Locker {c.activeLockerNumber}
+              {/* Trainers Grid */}
+              <div className="grid grid-cols-1 min-[420px]:grid-cols-2 gap-4">
+                {filteredTrainers.map(tr => (
+                  <motion.div
+                    key={tr.id}
+                    initial={{ opacity: 0, y: 8 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    onClick={() => setSelectedTrainerId(tr.id)}
+                    className="bg-zinc-900 border border-zinc-800 rounded-2xl p-5 hover:border-lime-400/40 transition-all cursor-pointer group space-y-4"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex items-center gap-3">
+                        <div className="w-12 h-12 rounded-full bg-zinc-800 border border-zinc-700/60 flex items-center justify-center shrink-0 group-hover:border-lime-400/50 transition-colors">
+                          <ChalkboardTeacher weight="duotone" className="w-6 h-6 text-lime-400" />
+                        </div>
+                        <div>
+                          <h4 className="font-bold text-white text-base group-hover:text-lime-300 transition-colors">
+                            Coach {tr.fullName}
+                          </h4>
+                          <p className="text-xs text-zinc-400">{tr.specialization}</p>
+                        </div>
+                      </div>
+
+                      <div className="flex flex-col items-end gap-1.5">
+                        {tr.isActive ? (
+                          <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-lime-400/20 text-lime-400 border border-lime-400/30">
+                            Active
+                          </span>
+                        ) : (
+                          <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-zinc-800 text-zinc-400 border border-zinc-700">
+                            Inactive
+                          </span>
+                        )}
+                        {tr.loginId && (
+                          <span className="font-mono text-xs px-2 py-0.5 rounded bg-zinc-800 text-cyan-300 font-semibold">
+                            {tr.loginId}
                           </span>
                         )}
                       </div>
-                      <div className="text-xs text-zinc-400 flex flex-wrap items-center gap-3">
-                        <span>Phone: {c.phone}</span>
-                        <span>·</span>
-                        <span>Plan: <strong className="text-zinc-200">{c.membership?.planName || "No Plan"}</strong></span>
-                        {c.membership?.startDate && c.membership?.endDate && (
-                          <>
-                            <span>·</span>
-                            <span className={isMemExpired ? "text-red-400 font-semibold" : "text-zinc-400"}>
-                              Validity: {c.membership.startDate} to {c.membership.endDate}
-                            </span>
-                          </>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2 text-xs text-zinc-400 pt-3 border-t border-zinc-800/80">
+                      <div>
+                        <span className="text-zinc-500 block text-[10px] uppercase font-bold">Phone</span>
+                        <span className="text-zinc-200 font-medium">{tr.phone || "No phone"}</span>
+                      </div>
+                      <div>
+                        <span className="text-zinc-500 block text-[10px] uppercase font-bold">Assigned Members</span>
+                        <span className="text-lime-400 font-bold font-mono">
+                          {tr.activeMembersCount} active ({tr.assignedMembers.length} total)
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="pt-1 flex items-center justify-between text-xs text-lime-400 font-semibold group-hover:translate-x-0.5 transition-transform">
+                      <span>View assigned members & actions →</span>
+                    </div>
+                  </motion.div>
+                ))}
+              </div>
+
+              {!isLoadingTrainers && filteredTrainers.length === 0 && (
+                <div className="text-center py-12 text-zinc-500 bg-zinc-900/50 border border-zinc-800/80 rounded-2xl">
+                  <Warning className="w-12 h-12 mx-auto mb-3 text-zinc-600" />
+                  <p className="font-semibold text-white text-base">No trainers found</p>
+                  <p className="text-sm mt-1">No trainers match your search criteria.</p>
+                </div>
+              )}
+            </div>
+          ) : (
+            /* TRAINER DETAILS & ASSIGNED MEMBERS VIEW */
+            <div className="space-y-6">
+              {/* Back Navigation Button */}
+              <button
+                onClick={() => setSelectedTrainerId(null)}
+                className="inline-flex items-center gap-2 text-sm font-semibold text-zinc-400 hover:text-white transition-colors py-1 cursor-pointer"
+              >
+                <ArrowLeft className="w-4 h-4" />
+                <span>Back to All Trainers</span>
+              </button>
+
+              {/* Selected Trainer Header Card */}
+              <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6 shadow-sm space-y-5">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                  <div className="flex items-center gap-4">
+                    <div className="w-16 h-16 rounded-2xl bg-zinc-800 border border-zinc-700/60 flex items-center justify-center shrink-0">
+                      <ChalkboardTeacher weight="duotone" className="w-8 h-8 text-lime-400" />
+                    </div>
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2.5 flex-wrap">
+                        <h3 className="text-xl font-bold text-white">Coach {selectedTrainer.fullName}</h3>
+                        {selectedTrainer.loginId && (
+                          <span className="font-mono text-xs px-2.5 py-0.5 rounded bg-zinc-800 text-cyan-300 font-bold border border-cyan-400/20">
+                            {selectedTrainer.loginId}
+                          </span>
                         )}
+                        {selectedTrainer.isActive ? (
+                          <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-lime-400/20 text-lime-400 border border-lime-400/30">
+                            Active Trainer
+                          </span>
+                        ) : (
+                          <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-zinc-800 text-zinc-400 border border-zinc-700">
+                            Inactive
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-sm text-zinc-400">{selectedTrainer.specialization}</p>
+                      <div className="flex items-center gap-4 text-xs text-zinc-400 pt-0.5">
+                        {selectedTrainer.phone && <span>Phone: <strong className="text-zinc-200">{selectedTrainer.phone}</strong></span>}
+                        {selectedTrainer.email && <span>Email: <strong className="text-zinc-200">{selectedTrainer.email}</strong></span>}
                       </div>
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-2 self-end sm:self-center shrink-0">
+                  {/* Reset Password Action Button */}
+                  <div className="self-start sm:self-center shrink-0">
                     <button
-                      onClick={() => handleCheckInClick(c)}
-                      className={`px-6 py-3 rounded-xl font-bold text-sm transition-all active:scale-[0.96] flex items-center gap-2 ${
-                        isMemExpired || isBlocked
-                          ? "bg-amber-400/20 text-amber-300 border border-amber-400/30 hover:bg-amber-400/30"
-                          : "bg-lime-400 text-zinc-950 hover:bg-lime-300 shadow-md shadow-lime-400/10"
-                      }`}
+                      onClick={() => setResetConfirmTrainer(selectedTrainer)}
+                      className="px-4 py-2.5 rounded-xl font-bold text-xs bg-amber-400/15 text-amber-300 border border-amber-400/30 hover:bg-amber-400/25 transition-all flex items-center gap-2 cursor-pointer shadow-sm"
                     >
-                      <Lightning weight="fill" className="w-4 h-4" />
-                      <span>{isMemExpired || isBlocked ? "Check In (Warning)" : t("staff.checkIn")}</span>
+                      <Key weight="bold" className="w-4 h-4 text-amber-400" />
+                      <span>Reset Trainer Password</span>
                     </button>
                   </div>
-                </motion.div>
-              );
-            })}
-          </div>
-        </div>
-      )}
+                </div>
+              </div>
 
-      {/* Empty States */}
-      {!isSearching && results.length === 0 && (
-        <div className="text-center py-12 text-zinc-500 bg-zinc-900/50 border border-zinc-800/80 rounded-2xl">
-          <Warning className="w-12 h-12 mx-auto mb-3 text-zinc-600" />
-          <p className="font-semibold text-white text-base">
-            {search ? t("staff.noMembersFound") : "No members found in this category"}
-          </p>
-          <p className="text-sm mt-1">
-            {search
-              ? t("staff.noMembersHint")
-              : "No customers match the selected filter. Try searching by name, phone, or Member ID."}
-          </p>
-        </div>
-      )}
-
-      {/* Today's Check-ins Section (Connected to Supabase attendance table) */}
-      <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6">
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="font-bold text-base flex items-center gap-2 text-white">
-            <Clock className="w-5 h-5 text-lime-400" />
-            <span>{t("staff.todayCheckIns")}</span>
-          </h3>
-          <span className="text-xs text-zinc-500 font-semibold">
-            {todayAttendance.length} recorded today
-          </span>
-        </div>
-
-        <div className="space-y-2">
-          {todayAttendance.slice(0, 15).map(att => (
-            <div
-              key={att.id}
-              className="flex justify-between items-center text-sm py-2.5 border-b border-zinc-800/50 hover:bg-zinc-800/30 px-2 rounded-lg transition-colors"
-            >
-              <div className="font-medium flex items-center gap-2.5">
-                <span className="font-mono text-xs px-2 py-0.5 rounded bg-zinc-800 text-lime-400 font-semibold">
-                  {att.customerCode}
-                </span>
-                <span className="text-white">{att.customerName}</span>
-                <CategoryBadge category={att.category} />
-                {att.accessStatus === "override" && (
-                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-yellow-400/20 text-yellow-400 font-bold">
-                    {t("staff.override")}
+              {/* Assigned Members Section */}
+              <div className="space-y-4">
+                <div className="flex items-center justify-between px-1">
+                  <h4 className="font-bold text-base text-white flex items-center gap-2">
+                    <Users weight="fill" className="w-5 h-5 text-lime-400" />
+                    <span>Members Assigned to Coach {selectedTrainer.fullName}</span>
+                  </h4>
+                  <span className="bg-zinc-800 text-lime-400 px-3 py-1 rounded-full text-xs font-mono font-bold">
+                    {selectedTrainer.assignedMembers.length} member{selectedTrainer.assignedMembers.length === 1 ? "" : "s"}
                   </span>
+                </div>
+
+                {selectedTrainer.assignedMembers.length > 0 ? (
+                  <div className="space-y-2.5">
+                    {selectedTrainer.assignedMembers.map(mem => (
+                      <div
+                        key={mem.id}
+                        className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4 hover:border-zinc-700 transition-colors"
+                      >
+                        <div className="flex items-start sm:items-center gap-4">
+                          <div className="w-10 h-10 rounded-full bg-zinc-800 flex items-center justify-center shrink-0">
+                            <User className="w-5 h-5 text-zinc-400" />
+                          </div>
+                          <div className="space-y-1">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="font-bold text-white text-sm sm:text-base">{mem.customerName}</span>
+                              <span className="font-mono text-xs px-2 py-0.5 rounded bg-zinc-800 text-lime-400 font-semibold">
+                                {mem.customerCode}
+                              </span>
+                              <CategoryBadge category={mem.category} />
+                              <span
+                                className={`px-2 py-0.5 rounded-full text-[11px] font-bold ${
+                                  mem.membershipStatus === "ACTIVE"
+                                    ? "bg-lime-400/20 text-lime-400"
+                                    : "bg-red-400/20 text-red-400"
+                                }`}
+                              >
+                                {mem.membershipStatus}
+                              </span>
+                              <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-cyan-400/20 text-cyan-300">
+                                PT {mem.assignmentStatus}
+                              </span>
+                            </div>
+
+                            <div className="text-xs text-zinc-400 flex flex-wrap items-center gap-3">
+                              <span>Phone: <strong className="text-zinc-200">{mem.phone || "—"}</strong></span>
+                              <span>·</span>
+                              <span>Plan: <strong className="text-zinc-200">{mem.planName}</strong></span>
+                              {mem.startDate && (
+                                <>
+                                  <span>·</span>
+                                  <span>Assigned: <strong className="text-zinc-200">{mem.startDate}</strong></span>
+                                </>
+                              )}
+                              {mem.membershipEnd && (
+                                <>
+                                  <span>·</span>
+                                  <span>Membership End: <strong className="text-zinc-200">{mem.membershipEnd}</strong></span>
+                                </>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="text-center py-12 text-zinc-500 bg-zinc-900/50 border border-zinc-800/80 rounded-2xl">
+                    <Users className="w-12 h-12 mx-auto mb-3 text-zinc-600" />
+                    <p className="font-semibold text-white text-base">No members currently assigned</p>
+                    <p className="text-sm mt-1">This trainer does not have any active member assignments yet.</p>
+                  </div>
                 )}
               </div>
-              <span className="text-zinc-500 text-xs font-mono">
-                {new Date(att.checkedInAt).toLocaleTimeString()}
-              </span>
             </div>
-          ))}
-
-          {todayAttendance.length === 0 && (
-            <p className="text-sm text-zinc-500 py-4 text-center">{t("staff.noCheckIns")}</p>
           )}
         </div>
-      </div>
+      )}
+
+      {/* ==================================================================== */}
+      {/* 3. MODALS                                                            */}
+      {/* ==================================================================== */}
+
+      {/* A. Member Details Modal */}
+      <AnimatePresence>
+        {selectedMember && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4"
+          >
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6 w-full max-w-lg shadow-2xl space-y-5"
+            >
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="w-12 h-12 rounded-xl bg-lime-400/20 text-lime-400 flex items-center justify-center">
+                    <User weight="bold" className="w-6 h-6" />
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-bold text-white">{selectedMember.fullName}</h3>
+                    <p className="text-xs text-zinc-400 font-mono">Member ID: {selectedMember.customerCode}</p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setSelectedMember(null)}
+                  className="p-2 text-zinc-400 hover:text-white rounded-lg hover:bg-zinc-800 transition-colors"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              <div className="bg-zinc-800/60 border border-zinc-700/60 rounded-xl p-4 space-y-3 text-sm">
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <span className="text-zinc-500 block text-xs uppercase font-bold">Category</span>
+                    <span className="text-white font-semibold">{categoryLabelOf(state, selectedMember.category)}</span>
+                  </div>
+                  <div>
+                    <span className="text-zinc-500 block text-xs uppercase font-bold">Status</span>
+                    {renderMemberStatusBadge(selectedMember)}
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3 pt-2 border-t border-zinc-700/40">
+                  <div>
+                    <span className="text-zinc-500 block text-xs uppercase font-bold">Phone</span>
+                    <span className="text-white font-semibold">{selectedMember.phone || "—"}</span>
+                  </div>
+                  <div>
+                    <span className="text-zinc-500 block text-xs uppercase font-bold">Gender</span>
+                    <span className="text-white font-semibold">{selectedMember.gender || "Not specified"}</span>
+                  </div>
+                </div>
+
+                <div className="pt-2 border-t border-zinc-700/40">
+                  <span className="text-zinc-500 block text-xs uppercase font-bold">Membership Plan</span>
+                  <span className="text-white font-semibold">{selectedMember.membership?.planName || "No Plan"}</span>
+                  {selectedMember.membership?.startDate && selectedMember.membership?.endDate && (
+                    <p className="text-xs text-zinc-400 mt-0.5">
+                      {selectedMember.membership.startDate} to {selectedMember.membership.endDate} ({selectedMember.membership.daysRemaining} days remaining)
+                    </p>
+                  )}
+                </div>
+
+                {selectedMember.activeLockerNumber && (
+                  <div className="pt-2 border-t border-zinc-700/40">
+                    <span className="text-zinc-500 block text-xs uppercase font-bold">Assigned Locker</span>
+                    <span className="text-amber-400 font-semibold font-mono">Locker #{selectedMember.activeLockerNumber}</span>
+                  </div>
+                )}
+
+                {selectedMember.category === "STUDENT" && (
+                  <div className="pt-2 border-t border-zinc-700/40">
+                    <span className="text-zinc-500 block text-xs uppercase font-bold">Student Verification</span>
+                    <span className="text-lime-400 font-semibold">
+                      {selectedMember.studentVerified ? "Verified Student" : "Pending Document Verification"}
+                    </span>
+                    {selectedMember.institution && (
+                      <p className="text-xs text-zinc-400 mt-0.5">Institution: {selectedMember.institution}</p>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              <div className="flex items-center justify-between gap-3">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const memberToReset = selectedMember;
+                    setSelectedMember(null);
+                    setResetConfirmMember(memberToReset);
+                  }}
+                  className="px-4 py-2.5 rounded-xl font-bold text-xs bg-amber-400/15 text-amber-300 hover:bg-amber-400 hover:text-zinc-950 border border-amber-400/30 transition-all flex items-center gap-1.5"
+                >
+                  <Key weight="bold" className="w-4 h-4" />
+                  <span>Reset Login Password</span>
+                </button>
+                <button
+                  onClick={() => setSelectedMember(null)}
+                  className="px-5 py-2.5 rounded-xl font-bold text-sm bg-zinc-800 text-zinc-200 hover:text-white hover:bg-zinc-700 transition-colors"
+                >
+                  Close
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Customer Password Reset Confirmation Modal */}
+      <AnimatePresence>
+        {resetConfirmMember && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4"
+          >
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6 w-full max-w-md shadow-2xl space-y-5"
+            >
+              <div className="flex items-center gap-3">
+                <div className="w-12 h-12 rounded-xl bg-amber-400/20 text-amber-400 flex items-center justify-center shrink-0">
+                  <Key weight="duotone" className="w-7 h-7" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-bold text-white">Reset Customer Password</h3>
+                  <p className="text-xs text-zinc-400">{resetConfirmMember.fullName}</p>
+                </div>
+              </div>
+
+              <div className="bg-zinc-800/60 border border-zinc-700/60 rounded-xl p-4 space-y-2.5 text-sm text-zinc-300">
+                <div className="flex justify-between items-center text-xs pb-2 border-b border-zinc-700/40">
+                  <span className="text-zinc-400">Customer ID / Login ID:</span>
+                  <span className="font-mono font-bold text-lime-400">{resetConfirmMember.customerCode}</span>
+                </div>
+                {resetConfirmMember.phone && (
+                  <div className="flex justify-between items-center text-xs pb-2 border-b border-zinc-700/40">
+                    <span className="text-zinc-400">Phone:</span>
+                    <span className="text-white font-medium">{resetConfirmMember.phone}</span>
+                  </div>
+                )}
+                <div className="flex justify-between items-center text-xs pb-2 border-b border-zinc-700/40">
+                  <span className="text-zinc-400">Category:</span>
+                  <span className="text-white font-medium">{categoryLabelOf(state, resetConfirmMember.category)}</span>
+                </div>
+                <p className="pt-1">
+                  Are you sure you want to reset the login password for{" "}
+                  <strong className="text-white">{resetConfirmMember.fullName}</strong>?
+                </p>
+                <p className="text-xs text-amber-400/90 pt-1">
+                  • A new secure temporary password will be generated immediately.
+                  <br />
+                  • The customer will use this temporary password to sign in.
+                  <br />
+                  • Existing membership, attendance, and locker records are strictly preserved.
+                </p>
+              </div>
+
+              <div className="flex gap-3">
+                <button
+                  type="button"
+                  onClick={() => setResetConfirmMember(null)}
+                  disabled={isResettingCustomerPassword}
+                  className="flex-1 bg-zinc-800 text-zinc-300 font-semibold text-sm py-2.5 rounded-xl hover:bg-zinc-700 transition-colors disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleExecuteCustomerResetPassword}
+                  disabled={isResettingCustomerPassword}
+                  className="flex-1 bg-amber-400 text-zinc-950 font-bold text-sm py-2.5 rounded-xl hover:bg-amber-300 transition-colors disabled:opacity-50 flex items-center justify-center gap-1.5"
+                >
+                  {isResettingCustomerPassword ? (
+                    <>
+                      <Clock className="w-4 h-4 animate-spin" />
+                      <span>Resetting...</span>
+                    </>
+                  ) : (
+                    <span>Confirm Reset</span>
+                  )}
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Customer Temporary Password Success Modal */}
+      <AnimatePresence>
+        {customerResetSuccessData && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4"
+          >
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6 w-full max-w-md shadow-2xl space-y-5"
+            >
+              <div className="flex items-center gap-3">
+                <div className="w-12 h-12 rounded-xl bg-lime-400/20 text-lime-400 flex items-center justify-center shrink-0">
+                  <CheckCircle weight="duotone" className="w-7 h-7" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-bold text-white">Password Reset Successful</h3>
+                  <p className="text-xs text-zinc-400">{customerResetSuccessData.customerName}</p>
+                </div>
+              </div>
+
+              <div className="bg-zinc-800/60 border border-zinc-700/60 rounded-xl p-4 space-y-3">
+                <div>
+                  <div className="text-[11px] font-bold uppercase tracking-wider text-zinc-400">Customer Login ID</div>
+                  <div className="text-sm font-mono font-bold text-cyan-300 mt-0.5">{customerResetSuccessData.customerCode}</div>
+                </div>
+
+                <div className="pt-2 border-t border-zinc-700/40">
+                  <div className="text-[11px] font-bold uppercase tracking-wider text-zinc-400">New Temporary Password</div>
+                  <div className="flex items-center justify-between gap-2 mt-1 bg-zinc-950/70 p-3 rounded-lg border border-zinc-800">
+                    <span className="font-mono text-base font-black text-lime-400 tracking-wider">
+                      {customerResetSuccessData.tempPassword}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        navigator.clipboard.writeText(customerResetSuccessData.tempPassword);
+                        setCopiedCustomerResetField(true);
+                        toast.success("Temporary password copied to clipboard!");
+                        setTimeout(() => setCopiedCustomerResetField(false), 2000);
+                      }}
+                      className="px-2.5 py-1.5 rounded-md bg-zinc-800 hover:bg-zinc-700 text-xs font-semibold text-zinc-200 flex items-center gap-1 transition-colors"
+                    >
+                      {copiedCustomerResetField ? (
+                        <>
+                          <CheckCircle className="w-3.5 h-3.5 text-lime-400" />
+                          <span className="text-lime-400">Copied</span>
+                        </>
+                      ) : (
+                        <>
+                          <Copy className="w-3.5 h-3.5" />
+                          <span>Copy</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+                  <p className="text-[11px] text-zinc-400 mt-2">
+                    Provide this temporary password to the customer. This password is displayed only once and will not be shown again after closing.
+                  </p>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setCustomerResetSuccessData(null)}
+                className="w-full bg-lime-400 text-zinc-950 font-bold text-sm py-2.5 rounded-xl hover:bg-lime-300 transition-colors"
+              >
+                Done
+              </button>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+
+      {/* B. Trainer Password Reset Confirmation Modal */}
+      <AnimatePresence>
+        {resetConfirmTrainer && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4"
+          >
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6 w-full max-w-md shadow-2xl space-y-5"
+            >
+              <div className="flex items-center gap-3">
+                <div className="w-12 h-12 rounded-xl bg-amber-400/20 text-amber-400 flex items-center justify-center shrink-0">
+                  <Key weight="duotone" className="w-7 h-7" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-bold text-white">Reset Trainer Password</h3>
+                  <p className="text-xs text-zinc-400">Coach {resetConfirmTrainer.fullName}</p>
+                </div>
+              </div>
+
+              <div className="bg-zinc-800/60 border border-zinc-700/60 rounded-xl p-4 space-y-2 text-sm text-zinc-300">
+                <p>
+                  Are you sure you want to reset the login password for{" "}
+                  <strong className="text-white">{resetConfirmTrainer.fullName}</strong>{" "}
+                  ({resetConfirmTrainer.loginId})?
+                </p>
+                <p className="text-xs text-amber-400/90 pt-1">
+                  • A new secure temporary password will be generated immediately.
+                  <br />
+                  • The trainer's current password will be invalidated.
+                </p>
+              </div>
+
+              <div className="flex gap-3">
+                <button
+                  onClick={() => setResetConfirmTrainer(null)}
+                  disabled={isResettingPassword}
+                  className="flex-1 bg-zinc-800 text-zinc-300 font-semibold text-sm py-2.5 rounded-xl hover:bg-zinc-700 transition-colors disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleExecuteResetPassword}
+                  disabled={isResettingPassword}
+                  className="flex-1 bg-amber-400 text-zinc-950 font-bold text-sm py-2.5 rounded-xl hover:bg-amber-300 transition-colors disabled:opacity-50 flex items-center justify-center gap-1.5"
+                >
+                  {isResettingPassword ? (
+                    <>
+                      <Clock className="w-4 h-4 animate-spin" />
+                      <span>Resetting...</span>
+                    </>
+                  ) : (
+                    <span>Confirm Reset</span>
+                  )}
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* C. Trainer Temporary Password Success Modal */}
+      <AnimatePresence>
+        {resetSuccessData && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4"
+          >
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6 w-full max-w-md shadow-2xl space-y-5"
+            >
+              <div className="flex items-center gap-3">
+                <div className="w-12 h-12 rounded-xl bg-lime-400/20 text-lime-400 flex items-center justify-center shrink-0">
+                  <CheckCircle weight="duotone" className="w-7 h-7" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-bold text-white">Password Reset Successful</h3>
+                  <p className="text-xs text-zinc-400">Coach {resetSuccessData.trainerName}</p>
+                </div>
+              </div>
+
+              <div className="bg-zinc-800/60 border border-zinc-700/60 rounded-xl p-4 space-y-3">
+                <div>
+                  <div className="text-[11px] font-bold uppercase tracking-wider text-zinc-400">Trainer Login ID</div>
+                  <div className="text-sm font-mono font-bold text-cyan-300 mt-0.5">{resetSuccessData.loginId}</div>
+                </div>
+
+                <div className="pt-2 border-t border-zinc-700/40">
+                  <div className="text-[11px] font-bold uppercase tracking-wider text-zinc-400">New Temporary Password</div>
+                  <div className="flex items-center justify-between gap-2 mt-1 bg-zinc-950/70 p-3 rounded-lg border border-zinc-800">
+                    <span className="font-mono text-base font-black text-lime-400 tracking-wider">
+                      {resetSuccessData.tempPassword}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        navigator.clipboard.writeText(resetSuccessData.tempPassword);
+                        setCopiedResetField(true);
+                        toast.success("Temporary password copied to clipboard!");
+                        setTimeout(() => setCopiedResetField(false), 2000);
+                      }}
+                      className="px-2.5 py-1.5 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-semibold flex items-center gap-1 transition-colors cursor-pointer"
+                      title="Copy Temporary Password"
+                    >
+                      {copiedResetField ? (
+                        <>
+                          <CheckCircle weight="fill" className="w-4 h-4 text-lime-400" />
+                          <span>Copied</span>
+                        </>
+                      ) : (
+                        <>
+                          <Copy className="w-4 h-4" />
+                          <span>Copy</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </div>
+
+                <p className="text-xs text-amber-300/90 pt-1">
+                  ⚠️ Provide this temporary password to Coach {resetSuccessData.trainerName}. For security, this password will not be shown again after closing this window.
+                </p>
+              </div>
+
+              <div className="flex justify-end">
+                <button
+                  onClick={() => setResetSuccessData(null)}
+                  className="w-full bg-lime-400 text-zinc-950 font-bold text-sm py-2.5 rounded-xl hover:bg-lime-300 transition-colors"
+                >
+                  Done
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
+
 
 function emptyForm() {
   return {

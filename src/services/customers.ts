@@ -132,3 +132,37 @@ export async function adminResetCustomerCredentials(customerId: string): Promise
     newTempPassword: result.new_temp_password,
   };
 }
+
+/**
+ * Securely resets a customer's login credentials via Reception-authorized Supabase RPC.
+ * Never stores or retrieves plaintext passwords in database tables.
+ * Returns the one-time generated temporary password to authorized Reception staff.
+ */
+export async function receptionResetCustomerPassword(customerId: string): Promise<ResetCredentialsResult> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { data, error } = await (supabase as any).rpc("reception_reset_customer_password", {
+    p_customer_id: customerId,
+  });
+
+  if (error) {
+    console.error("reception_reset_customer_password RPC error:", error);
+    throw new Error(error.message || "Failed to reset customer password.");
+  }
+
+  const result = data as {
+    success: boolean;
+    customer_id: string;
+    customer_name: string;
+    customer_code: string;
+    new_temp_password: string;
+  };
+
+  return {
+    success: result.success,
+    customerId: result.customer_id,
+    customerName: result.customer_name,
+    customerCode: result.customer_code,
+    loginId: result.customer_code,
+    newTempPassword: result.new_temp_password,
+  };
+}

@@ -1,35 +1,41 @@
-import { useEffect, useState } from "react";
-import { BrowserRouter, Routes, Route, Navigate, useNavigate, useLocation } from "react-router-dom";
-import { motion, AnimatePresence } from "framer-motion";
-import { Barbell, User, Users, ShieldCheck, Envelope, SignOut, X, CheckCircle, Warning, Bell, ChalkboardTeacher } from "@phosphor-icons/react";
+import { BrowserRouter, Routes, Route, Navigate, useNavigate, useLocation, useParams } from "react-router-dom";
+import { Barbell, User, Users, ShieldCheck, SignOut, ChalkboardTeacher } from "@phosphor-icons/react";
 import { Toaster, toast } from "sonner";
-import { GymProvider, useGym, useT, sendEmail, addAudit, generateId } from "./context/GymContext";
-import type { AuthUser, Member, Role } from "./types";
+import { GymProvider, useGym, useT } from "./context/GymContext";
+import type { Member, Role } from "./types";
 import { LANGUAGES } from "./i18n/translations";
 import PublicWebsite from "./components/PublicWebsite";
 import LoginPage from "./components/LoginPage";
+import ResetPasswordPage from "./components/ResetPasswordPage";
 import AdminPortal from "./components/AdminPortal";
 import StaffPortal from "./components/StaffPortal";
 import MemberPortal from "./components/MemberPortal";
 import TrainerPortal from "./components/TrainerPortal";
 import { signOutUser } from "./services/auth";
 
-const EMAIL_STATUS_LABELS: Record<string, string> = { queued: "Queued", sent: "Sent", delivered: "Delivered", opened: "Opened", failed: "Failed" };
-const EMAIL_TYPE_LABELS: Record<string, string> = { welcome: "Welcome", receipt: "Receipt", reminder: "Reminder", expiry: "Expiry", marketing: "Announcement" };
-
 export function getRoleDashboardPath(role: Role): string {
   switch (role) {
     case "owner":
-      return "/admin";
+      return "/admin/dashboard";
     case "staff":
-      return "/staff";
+      return "/reception/dashboard";
     case "trainer":
-      return "/trainer";
+      return "/trainer/dashboard";
     case "member":
-      return "/member";
+      return "/customer/dashboard";
     default:
       return "/";
   }
+}
+
+function StaffPortalRouteRedirect() {
+  const { section } = useParams();
+  return <Navigate to={`/reception/${section || "dashboard"}`} replace />;
+}
+
+function MemberPortalRouteRedirect() {
+  const { section } = useParams();
+  return <Navigate to={`/customer/${section || "dashboard"}`} replace />;
 }
 
 interface ProtectedRouteProps {
@@ -68,7 +74,6 @@ function AppShell() {
   const { state, dispatch } = useGym();
   const t = useT();
   const navigate = useNavigate();
-  const [showEmailLog, setShowEmailLog] = useState(false);
 
   const handleLogout = async () => {
     try {
@@ -117,6 +122,15 @@ function AppShell() {
             <Barbell weight="fill" className="w-7 h-7 text-lime-400" />
             <span className="font-black text-lg uppercase tracking-tight text-white hidden sm:block">{state.settings.gymName}</span>
           </div>
+
+          {/* Public Quick Links */}
+          <div className="hidden lg:flex items-center gap-6 text-sm font-semibold text-zinc-300">
+            <button onClick={() => navigate("/memberships")} className="hover:text-lime-400 transition-colors cursor-pointer">Memberships</button>
+            <button onClick={() => navigate("/facilities")} className="hover:text-lime-400 transition-colors cursor-pointer">Facilities</button>
+            <button onClick={() => navigate("/about")} className="hover:text-lime-400 transition-colors cursor-pointer">About</button>
+            <button onClick={() => navigate("/contact")} className="hover:text-lime-400 transition-colors cursor-pointer">Contact</button>
+          </div>
+
           <div className="flex items-center gap-3">
             <div className="flex items-center gap-1 bg-zinc-900 border border-zinc-800 rounded-xl p-1" role="group" aria-label={t("app.language")}>
               {LANGUAGES.map(lang => (
@@ -142,10 +156,6 @@ function AppShell() {
                   {state.currentUser.role === "trainer" && <ChalkboardTeacher className="w-4 h-4 text-amber-400" />}
                   {state.currentUser.name}
                 </span>
-                <button onClick={() => setShowEmailLog(true)} className="relative p-2 text-zinc-400 hover:text-white transition-colors">
-                  <Envelope className="w-5 h-5" />
-                  {state.emailLogs.length > 0 && <span className="absolute -top-0.5 -right-0.5 w-4 h-4 bg-lime-400 text-zinc-950 text-[10px] font-bold rounded-full flex items-center justify-center">{state.emailLogs.length}</span>}
-                </button>
                 <button onClick={handleLogout} className="p-2 text-zinc-400 hover:text-red-400 transition-colors" title={t("app.logout")}><SignOut className="w-5 h-5" /></button>
               </>
             ) : (
@@ -162,10 +172,15 @@ function AppShell() {
       {/* Main content */}
       <main className="relative pt-16 md:pt-[4.5rem]">
         <Routes>
-          {/* Public Home */}
+          {/* Public Website Routes */}
           <Route path="/" element={<PublicWebsite onJoin={handleJoin} />} />
+          <Route path="/about" element={<PublicWebsite onJoin={handleJoin} initialSection="about" />} />
+          <Route path="/memberships" element={<PublicWebsite onJoin={handleJoin} initialSection="plans" />} />
+          <Route path="/facilities" element={<PublicWebsite onJoin={handleJoin} initialSection="facilities" />} />
+          <Route path="/trainers" element={<PublicWebsite onJoin={handleJoin} initialSection="about" />} />
+          <Route path="/contact" element={<PublicWebsite onJoin={handleJoin} initialSection="contact" />} />
 
-          {/* Login Route: redirect to role dashboard if already authenticated */}
+          {/* Authentication Routes */}
           <Route
             path="/login"
             element={
@@ -179,43 +194,61 @@ function AppShell() {
               )
             }
           />
-
-          {/* Role Protected Dashboards */}
+          <Route path="/forgot-password" element={<Navigate to="/login?forgot=true" replace />} />
           <Route
-            path="/admin"
+            path="/reset-password"
+            element={<ResetPasswordPage onBackToLogin={() => navigate("/login")} />}
+          />
+
+          {/* Admin Portal Routes */}
+          <Route path="/admin" element={<Navigate to="/admin/dashboard" replace />} />
+          <Route
+            path="/admin/:section"
             element={
               <ProtectedRoute allowedRoles={["owner"]}>
                 <AdminPortal />
               </ProtectedRoute>
             }
           />
+
+          {/* Reception & Staff Portal Routes */}
+          <Route path="/reception" element={<Navigate to="/reception/dashboard" replace />} />
           <Route
-            path="/staff"
+            path="/reception/:section"
             element={
               <ProtectedRoute allowedRoles={["staff", "owner"]}>
                 <StaffPortal />
               </ProtectedRoute>
             }
           />
-          <Route path="/reception" element={<Navigate to="/staff" replace />} />
+          <Route path="/staff" element={<Navigate to="/reception/dashboard" replace />} />
+          <Route path="/staff/:section" element={<StaffPortalRouteRedirect />} />
+
+          {/* Trainer Portal Routes */}
+          <Route path="/trainer" element={<Navigate to="/trainer/dashboard" replace />} />
           <Route
-            path="/trainer"
+            path="/trainer/:section"
             element={
               <ProtectedRoute allowedRoles={["trainer"]}>
                 <TrainerPortal />
               </ProtectedRoute>
             }
           />
+
+          {/* Customer & Member Portal Routes */}
+          <Route path="/customer" element={<Navigate to="/customer/dashboard" replace />} />
           <Route
-            path="/member"
+            path="/customer/:section"
             element={
               <ProtectedRoute allowedRoles={["member", "owner"]}>
                 <MemberPortal />
               </ProtectedRoute>
             }
           />
+          <Route path="/member" element={<Navigate to="/customer/dashboard" replace />} />
+          <Route path="/member/:section" element={<MemberPortalRouteRedirect />} />
 
-          {/* Catch-all */}
+          {/* Fallback Catch-all Route */}
           <Route
             path="*"
             element={
@@ -228,37 +261,6 @@ function AppShell() {
           />
         </Routes>
       </main>
-
-      {/* E-mail log */}
-      <AnimatePresence>
-        {showEmailLog && (
-          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm" onClick={() => setShowEmailLog(false)}>
-            <motion.div initial={{ x: "100%" }} animate={{ x: 0 }} exit={{ x: "100%" }} transition={{ type: "spring", damping: 30, stiffness: 300 }} className="absolute right-0 top-0 bottom-0 w-full max-w-md bg-zinc-900 border-l border-zinc-800 p-6 overflow-y-auto" onClick={e => e.stopPropagation()}>
-              <div className="flex justify-between items-center mb-6">
-                <h3 className="text-xl font-bold flex items-center gap-2"><Envelope className="w-5 h-5 text-lime-400" /> {t("app.emailLog")}</h3>
-                <button onClick={() => setShowEmailLog(false)}><X className="w-5 h-5 text-zinc-400" /></button>
-              </div>
-              <div className="space-y-4">
-                {state.emailLogs.slice().reverse().map(email => (
-                  <div key={email.id} className="bg-zinc-800/50 border border-zinc-700/50 rounded-xl p-4">
-                    <div className="flex justify-between items-start mb-2">
-                      <div className="font-semibold text-sm">{email.subject}</div>
-                      <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${email.status === "opened" ? "bg-lime-400/20 text-lime-400" : email.status === "delivered" ? "bg-blue-400/20 text-blue-400" : email.status === "failed" ? "bg-red-400/20 text-red-400" : "bg-zinc-600/20 text-zinc-400"}`}>{EMAIL_STATUS_LABELS[email.status] || email.status}</span>
-                    </div>
-                    <div className="text-xs text-zinc-500 mb-2">{t("app.recipient")}: {email.toName} &lt;{email.to}&gt;</div>
-                    <div className="text-xs text-zinc-400 line-clamp-2">{email.body}</div>
-                    <div className="flex justify-between items-center mt-3 text-xs text-zinc-600">
-                      <span>{EMAIL_TYPE_LABELS[email.type] || email.type}</span>
-                      <span>{new Date(email.sentAt).toLocaleString("en-US")}</span>
-                    </div>
-                  </div>
-                ))}
-                {state.emailLogs.length === 0 && <p className="text-zinc-500 text-center py-8">{t("app.noEmails")}</p>}
-              </div>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
 
       <Toaster position="top-right" toastOptions={{ style: { background: "#18181b", border: "1px solid #27272a", color: "#fff" } }} />
     </div>

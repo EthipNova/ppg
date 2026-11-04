@@ -40,15 +40,16 @@ export async function fetchCategories(): Promise<CategoryLabel[]> {
   try {
     const { data, error } = await supabase
       .from("customer_categories")
-      .select("key, label, description, is_system")
+      .select("key, label, description, is_system, is_active")
       .order("created_at", { ascending: true });
 
     if (!error && data && data.length > 0) {
-      const mapped: CategoryLabel[] = (data as Array<{ key: string; label: string; description?: string | null; is_system?: boolean | null }>).map(row => ({
+      const mapped: CategoryLabel[] = (data as Array<{ key: string; label: string; description?: string | null; is_system?: boolean | null; is_active?: boolean | null }>).map(row => ({
         category: row.key as CustomerCategory,
         label: row.label,
         description: row.description || "",
         isSystem: Boolean(row.is_system),
+        isActive: row.is_active !== false,
       }));
 
       // Ensure all 4 core categories exist

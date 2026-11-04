@@ -91,9 +91,11 @@ export interface StaffUser {
 export interface GymSettings {
   gymName: string;
   tagline: string;
+  description?: string;
   email: string;
   phone: string;
   address: string;
+  operatingHours?: string;
   inactivityThresholdDays: number;
   currency: string;
   /* Steam (Hammam) add-on configuration */
@@ -187,6 +189,7 @@ export interface CategoryLabel {
   label: string;
   description: string;
   isSystem?: boolean;
+  isActive?: boolean;
 }
 
 /** Règle d'accès associée à une catégorie (jours + plage horaire). */
@@ -261,7 +264,7 @@ export interface SteamUsage {
 /* ------------------------------------------------------------------ */
 
 /** Langues prises en charge par l'interface. */
-export type Language = "en" | "am";
+export type Language = "en" | "am" | "sid";
 
 /** Statut opérationnel d'un casier. */
 export type LockerStatus = "AVAILABLE" | "IN_USE" | "OUT_OF_SERVICE" | "OCCUPIED" | "KEY_OUT" | "MAINTENANCE";

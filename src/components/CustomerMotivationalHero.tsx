@@ -1,10 +1,6 @@
-import { useMemo } from "react";
-import { motion } from "framer-motion";
 import {
-  Fire,
   Warning,
   XCircle,
-  Lightning,
   ShieldCheck,
   Lockers,
 } from "@phosphor-icons/react";
@@ -29,123 +25,83 @@ export default function CustomerMotivationalHero({
   member,
   daysRemaining,
   countdownState,
-  progress,
-  planName,
-  planPrice,
-  steamLeft,
   categoryLabel,
   lockerNumber,
-  isStudent = false,
-  isMuslim = false,
   hasActiveMembership = true,
 }: CustomerMotivationalHeroProps) {
-  // Check customer's saved gender field directly (do not infer from name or category)
-  const isMale = useMemo(() => {
-    const raw = (member.gender || "").trim().toLowerCase();
-    return raw === "male" || raw === "m";
-  }, [member.gender]);
-
-  const firstName = useMemo(() => {
-    return member.name.trim().split(" ")[0] || "Athlete";
-  }, [member.name]);
-
-  const formattedExpiry = useMemo(() => {
-    if (!member.expiryDate || member.expiryDate === "—") return "—";
-    const d = new Date(member.expiryDate);
-    return isNaN(d.getTime()) ? member.expiryDate : d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
-  }, [member.expiryDate]);
+  const memberDisplayId = member.memberId || "PP-MEMBER";
 
   return (
-    <div className="relative rounded-3xl overflow-hidden border border-zinc-800 bg-zinc-950 shadow-2xl">
+    <div className="relative rounded-3xl overflow-hidden border border-zinc-800/90 shadow-2xl select-none bg-[#111111]">
       {/* ------------------------------------------------------------------ */}
-      {/* BACKGROUND LAYER                                                  */}
+      {/* BACKGROUND: Dark Charcoal / Deep Black with Subtle Crimson Accent */}
       {/* ------------------------------------------------------------------ */}
-      {isMale ? (
-        // Male customer specific visual: Powerful male bodybuilder in gritty gym lighting
-        <div className="absolute inset-0 z-0">
-          <img
-            src="/images/gym-hero-male.jpg"
-            alt="PowerPlus Male Athlete"
-            className="w-full h-full object-cover object-top sm:object-center opacity-65 md:opacity-80 scale-100 transition-transform duration-700 hover:scale-105"
-          />
-          {/* Multi-layered dark gradient overlays for maximum text legibility & gritty urban atmosphere */}
-          <div className="absolute inset-0 bg-gradient-to-r from-zinc-950 via-zinc-950/85 to-zinc-950/40 md:via-zinc-950/75 md:to-transparent" />
-          <div className="absolute inset-0 bg-gradient-to-t from-zinc-950 via-zinc-950/60 to-transparent" />
-          <div className="absolute inset-0 bg-zinc-950/30 backdrop-contrast-125" />
-        </div>
-      ) : (
-        // Female or general customer visual: Sleek dark high-energy urban gym atmosphere
-        <div className="absolute inset-0 z-0">
-          <div className="absolute inset-0 bg-gradient-to-br from-zinc-900 via-zinc-950 to-black" />
-          <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,_var(--tw-gradient-stops))] from-lime-500/10 via-transparent to-transparent" />
-          {/* Subtle gym mesh pattern overlay */}
-          <div
-            className="absolute inset-0 opacity-[0.04]"
-            style={{
-              backgroundImage: `radial-gradient(circle at 2px 2px, white 1px, transparent 0)`,
-              backgroundSize: "24px 24px",
-            }}
-          />
-          <div className="absolute inset-0 bg-gradient-to-t from-zinc-950 via-transparent to-transparent" />
-        </div>
-      )}
+      <div
+        className="absolute inset-0 z-0 pointer-events-none"
+        style={{
+          background: "radial-gradient(ellipse 90% 60% at 50% -10%, rgba(139, 29, 36, 0.28) 0%, rgba(26, 26, 26, 0.95) 55%, #111111 100%)",
+        }}
+      >
+        {/* Subtle geometric grid texture */}
+        <div
+          className="absolute inset-0 opacity-[0.04]"
+          style={{
+            backgroundImage:
+              "linear-gradient(to right, #ffffff 1px, transparent 1px), linear-gradient(to bottom, #ffffff 1px, transparent 1px)",
+            backgroundSize: "28px 28px",
+          }}
+        />
 
-      {/* Decorative painted-wall watermark text in background */}
-      <div className="absolute right-4 bottom-2 z-0 select-none pointer-events-none opacity-[0.04] sm:opacity-[0.06] font-black uppercase text-7xl sm:text-9xl text-white tracking-tighter leading-none whitespace-nowrap overflow-hidden">
-        POWERPLUS
+        {/* Ambient corner vignette */}
+        <div className="absolute inset-0 bg-gradient-to-t from-[#111111] via-transparent to-black/20" />
       </div>
 
       {/* ------------------------------------------------------------------ */}
-      {/* FOREGROUND CONTENT                                                 */}
+      {/* FOREGROUND CONTENT: Compact, Logo-Centered, Athletic Brand Hero    */}
       {/* ------------------------------------------------------------------ */}
-      <div className="relative z-10 p-6 sm:p-8 lg:p-10 flex flex-col justify-between min-h-[460px] lg:min-h-[500px]">
-        {/* Top Bar: Athlete Division Badges & Status */}
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[11px] font-black uppercase tracking-widest bg-lime-400 text-zinc-950 shadow-md shadow-lime-400/20">
-              <Lightning weight="fill" className="w-3.5 h-3.5" />
-              <span>LOCK IN</span>
-            </span>
-
-            <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider bg-zinc-900/90 text-zinc-300 border border-zinc-700/60 backdrop-blur-md">
-              <ShieldCheck weight="fill" className="w-3.5 h-3.5 text-lime-400" />
+      <div className="relative z-10 px-4 py-4 sm:px-7 sm:py-5 flex flex-col justify-between gap-3 sm:gap-4">
+        {/* Top Status Strip: Category, Locker Tag, Member ID, Status Pill */}
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
+            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] sm:text-[11px] font-black uppercase tracking-wider bg-zinc-900 border border-zinc-700/80 text-zinc-200 shadow-sm">
+              <ShieldCheck weight="fill" className="w-3.5 h-3.5 text-[#8B1D24]" />
               <span>{categoryLabel}</span>
             </span>
 
             {member.gender && (
-              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold uppercase tracking-wider bg-zinc-900/80 text-zinc-400 border border-zinc-800">
-                <span>{member.gender}</span>
+              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] sm:text-[11px] font-bold uppercase tracking-wider bg-zinc-800/80 text-zinc-300 border border-zinc-700/50">
+                {member.gender}
               </span>
             )}
 
             {lockerNumber && (
-              <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-semibold bg-amber-400/15 text-amber-300 border border-amber-400/30">
-                <Lockers weight="fill" className="w-3.5 h-3.5" />
+              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] sm:text-[11px] font-bold bg-[#8B1D24]/20 text-red-200 border border-[#8B1D24]/40">
+                <Lockers weight="fill" className="w-3.5 h-3.5 text-[#8B1D24]" />
                 <span>Locker #{lockerNumber}</span>
               </span>
             )}
           </div>
 
           <div className="flex items-center gap-2">
-            <span className="text-[11px] font-mono tracking-wider text-zinc-400 uppercase">
-              ID: <span className="font-bold text-white">{member.memberId}</span>
+            <span className="text-[10px] sm:text-[11px] font-mono font-bold tracking-wider text-zinc-400 uppercase">
+              ID: <span className="font-black text-[#F5F5F5]">{memberDisplayId}</span>
             </span>
             <span
-              className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-black uppercase tracking-wider ${
+              className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] sm:text-[11px] font-black uppercase tracking-wider shadow-sm ${
                 countdownState === "active"
-                  ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30"
+                  ? "bg-emerald-950/80 text-emerald-300 border border-emerald-700/50"
                   : countdownState === "expiring"
-                  ? "bg-yellow-400/20 text-yellow-300 border border-yellow-400/30"
-                  : "bg-red-500/20 text-red-400 border border-red-500/30"
+                  ? "bg-amber-950/80 text-amber-300 border border-amber-700/50"
+                  : "bg-red-950/90 text-red-200 border border-red-800/60"
               }`}
             >
               <span
-                className={`w-2 h-2 rounded-full ${
+                className={`w-1.5 h-1.5 rounded-full ${
                   countdownState === "active"
-                    ? "bg-emerald-400 shadow-sm shadow-emerald-400/80 animate-pulse"
+                    ? "bg-emerald-400 animate-pulse"
                     : countdownState === "expiring"
-                    ? "bg-yellow-400 shadow-sm shadow-yellow-400/80"
-                    : "bg-red-400 shadow-sm shadow-red-400/80"
+                    ? "bg-amber-400"
+                    : "bg-red-400"
                 }`}
               />
               <span>{countdownState.toUpperCase()}</span>
@@ -153,163 +109,169 @@ export default function CustomerMotivationalHero({
           </div>
         </div>
 
-        {/* Center: Painted Wall Typography Composition */}
-        <div className="my-6 lg:my-8 max-w-2xl">
-          {/* Urban Street Stencil Accent Line */}
-          <div className="flex items-center gap-2 text-xs font-mono font-bold tracking-widest text-lime-400 uppercase mb-2">
-            <Fire weight="fill" className="w-4 h-4 text-lime-400 animate-pulse" />
-            <span>DISCIPLINE OVER MOTIVATION · DAILY MISSION</span>
-          </div>
-
-          {/* Main Headline (Painted Wall Art Aesthetic) */}
-          <motion.h1
-            initial={{ opacity: 0, y: 15 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="text-4xl sm:text-6xl lg:text-7xl font-black uppercase tracking-tighter text-white leading-[0.92] drop-shadow-md"
+        {/* Center: Preserved PowerPlus Brand Identity & Exact Slogan in Crisp Contrast */}
+        <div className="my-0.5 sm:my-1 flex items-center justify-center">
+          <svg
+            viewBox="0 0 740 156"
+            className="w-full max-w-[540px] h-auto select-none overflow-visible"
+            fill="none"
+            xmlns="http://www.w3.org/2000/svg"
+            role="img"
+            aria-label="Power GYM PLUS - Train hard Live strong"
           >
-            YOU <span className="text-lime-400">VS</span> YOU.
-          </motion.h1>
+            <defs>
+              {/* Subtle raised depth effect for slogan on dark background */}
+              <filter id="raised-slogan" x="-10%" y="-10%" width="120%" height="130%">
+                <feDropShadow dx="0" dy="1.5" stdDeviation="0.8" floodColor="#000000" floodOpacity="0.85" />
+              </filter>
 
-          {/* Sub-slogans in dynamic wall layout */}
-          <motion.div
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.1 }}
-            className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-xs sm:text-sm font-black uppercase tracking-wider text-zinc-300"
-          >
-            <span className="text-zinc-200">NO PAIN, NO GAIN.</span>
-            <span className="text-zinc-600">/</span>
-            <span className="text-white">ONE MORE REP.</span>
-            <span className="text-zinc-600">/</span>
-            <span className="text-lime-400">BUILT NOT GIVEN.</span>
-            <span className="text-zinc-600">/</span>
-            <span className="text-zinc-300">TRUST THE PROCESS.</span>
-            <span className="text-zinc-600">/</span>
-            <span className="text-amber-300">NO EXCUSES.</span>
-            <span className="text-zinc-600">/</span>
-            <span className="text-zinc-200">STAY DISCIPLINED.</span>
-            <span className="text-zinc-600">/</span>
-            <span className="text-emerald-400">EVERY REP COUNTS.</span>
-          </motion.div>
+              {/* Logo depth filter */}
+              <filter id="logo-depth" x="-10%" y="-10%" width="120%" height="120%">
+                <feDropShadow dx="0" dy="2" stdDeviation="1.5" floodColor="#000000" floodOpacity="0.6" />
+              </filter>
+            </defs>
 
-          <p className="mt-4 text-xs sm:text-sm text-zinc-400 max-w-lg leading-relaxed">
-            Welcome back, <span className="font-bold text-white">{firstName}</span>. Every single workout brings you closer to your peak physique. Stay relentless and dominate the session.
-          </p>
+            {/* BRAND LOGO COMPOSITION: Power GYM PLUS */}
+            <g filter="url(#logo-depth)">
+              {/* Heavy geometric uppercase P in clean light tone */}
+              <text
+                x="30"
+                y="86"
+                fill="#F5F5F5"
+                fontFamily="'Arial Black', 'Impact', sans-serif"
+                fontSize="84"
+                fontWeight="900"
+                letterSpacing="-2"
+              >
+                P
+              </text>
+
+              {/* Custom dumbbell / flexed-arm emblem representing the letter O */}
+              <g transform="translate(98, 22)">
+                {/* Outer muscular curved contour forming the O */}
+                <rect x="0" y="8" width="56" height="56" rx="14" fill="#1C1C1C" stroke="#2D2D2D" strokeWidth="1.5" />
+                <rect x="13" y="19" width="30" height="34" rx="8" fill="#111111" />
+                {/* Horizontal barbell bar shaft through the emblem */}
+                <rect x="6" y="32" width="44" height="8" rx="2" fill="#F5F5F5" />
+                {/* Dumbbell left & right weight plates */}
+                <rect x="3" y="21" width="6" height="30" rx="2" fill="#E0E0E0" />
+                <rect x="47" y="21" width="6" height="30" rx="2" fill="#E0E0E0" />
+                {/* Center emblem accent in crimson */}
+                <circle cx="28" cy="36" r="3.5" fill="#8B1D24" />
+              </g>
+
+              {/* The letters 'wer' in athletic crimson */}
+              <text
+                x="165"
+                y="86"
+                fill="#8B1D24"
+                fontFamily="'Arial Black', 'Impact', sans-serif"
+                fontSize="74"
+                fontWeight="900"
+                letterSpacing="-2"
+              >
+                wer
+              </text>
+
+              {/* Underline-style container beneath 'wer' in contrasting light tone */}
+              <path
+                d="M 163 94 L 163 89 M 163 94 L 302 94 M 302 94 L 302 89"
+                stroke="#F5F5F5"
+                strokeWidth="4"
+                strokeLinecap="square"
+              />
+
+              {/* Small plus sign (+) at the upper-right of the letter r in light tone */}
+              <g transform="translate(298, 26)">
+                <path
+                  d="M 6 0 L 6 12 M 0 6 L 12 6"
+                  stroke="#F5F5F5"
+                  strokeWidth="3.5"
+                  strokeLinecap="round"
+                />
+              </g>
+
+              {/* 'GYM' in athletic condensed italic crimson lettering */}
+              <text
+                x="332"
+                y="52"
+                fill="#8B1D24"
+                fontFamily="'Impact', 'Barlow Condensed', 'Arial Black', sans-serif"
+                fontSize="40"
+                fontWeight="900"
+                fontStyle="italic"
+                letterSpacing="2"
+              >
+                GYM
+              </text>
+
+              {/* 'PLUS' in uppercase crimson lettering with approx 0.25em letter spacing */}
+              <text
+                x="332"
+                y="88"
+                fill="#8B1D24"
+                fontFamily="'Arial Black', 'Impact', sans-serif"
+                fontSize="48"
+                fontWeight="900"
+                letterSpacing="0.25em"
+              >
+                PLUS
+              </text>
+            </g>
+
+            {/* EXACT SLOGAN: Train hard Live strong */}
+            {/* Bold athletic display font with high contrast light text (#F5F5F5) and barbell details on T and L */}
+            <g filter="url(#raised-slogan)">
+              {/* Barbell plates detail on capital T crossbar */}
+              <rect x="29" y="117" width="3.5" height="12" rx="1" fill="#F5F5F5" />
+              <rect x="53" y="117" width="3.5" height="12" rx="1" fill="#F5F5F5" />
+
+              {/* Barbell plates detail on capital L foot */}
+              <rect x="254" y="132" width="3" height="10" rx="1" fill="#F5F5F5" />
+              <rect x="272" y="132" width="3" height="10" rx="1" fill="#F5F5F5" />
+
+              <text
+                x="32"
+                y="138"
+                fill="#F5F5F5"
+                fontFamily="'Impact', 'Bebas Neue', 'Barlow Condensed', 'Arial Black', sans-serif"
+                fontSize="31"
+                fontWeight="900"
+                letterSpacing="3"
+              >
+                Train hard Live strong
+              </text>
+            </g>
+          </svg>
         </div>
 
-        {/* Bottom Panel: Membership Countdown & Operational Information */}
-        <div className="pt-4 border-t border-zinc-800/80">
-          <div className="grid grid-cols-1 md:grid-cols-12 gap-4 items-center">
-            {/* Membership Details */}
-            <div className="md:col-span-8 space-y-2">
-              <div className="flex flex-wrap items-center gap-x-5 gap-y-1 text-xs">
-                <span className="text-zinc-400">
-                  Plan: <span className="text-white font-bold">{planName || (isMuslim ? "Women's Access" : "Standard Access")}</span>
-                </span>
-                {planPrice != null && (
-                  <span className="text-zinc-400">
-                    Fee: <span className="text-lime-400 font-bold">{planPrice} ETB</span>
-                  </span>
-                )}
-                {member.expiryDate && member.expiryDate !== "—" && (
-                  <span className="text-zinc-400">
-                    Expires: <span className="text-white font-semibold">{formattedExpiry}</span>
-                  </span>
-                )}
-                {steamLeft !== undefined && !isStudent && (
-                  <span className="text-zinc-400">
-                    Steam: <span className="text-cyan-400 font-bold">{steamLeft} sessions</span>
-                  </span>
-                )}
-              </div>
-
-              {/* Progress Bar */}
-              {hasActiveMembership && (
-                <div className="space-y-1.5">
-                  <div className="relative bg-zinc-800/90 rounded-full h-2.5 overflow-hidden border border-zinc-700/50">
-                    <motion.div
-                      initial={{ width: 0 }}
-                      animate={{ width: `${Math.min(100, Math.max(0, progress))}%` }}
-                      transition={{ duration: 0.8, ease: "easeOut" }}
-                      className={`h-full rounded-full ${
-                        countdownState === "expired"
-                          ? "bg-red-500"
-                          : countdownState === "expiring"
-                          ? "bg-gradient-to-r from-yellow-500 to-amber-400"
-                          : "bg-gradient-to-r from-lime-500 via-lime-400 to-emerald-400"
-                      }`}
-                    />
-                  </div>
-                  <div className="flex justify-between items-center text-[11px] text-zinc-500 font-mono">
-                    <span>{Math.round(progress)}% of cycle completed</span>
-                    <span>{countdownState === "expired" ? "Cycle ended" : `${daysRemaining} days remaining`}</span>
-                  </div>
-                </div>
-              )}
+        {/* Bottom Strip: Expired / Expiring Alerts or Compact Cycle Bar */}
+        {countdownState === "expired" ? (
+          <div className="rounded-xl border border-red-800/60 bg-red-950/80 p-2.5 sm:p-3 flex items-center gap-2.5 text-xs text-red-200">
+            <XCircle weight="fill" className="w-4 h-4 text-red-400 shrink-0" />
+            <div className="font-bold">
+              Your membership has expired. Please visit Reception to renew your membership.
             </div>
-
-            {/* Countdown Big Display */}
-            {hasActiveMembership && (
-              <div className="md:col-span-4 flex items-center justify-start md:justify-end gap-3.5 bg-zinc-900/70 border border-zinc-800/70 p-3 rounded-2xl backdrop-blur-md">
-                <div className="text-right">
-                  <div className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">
-                    {countdownState === "expired" ? "Status" : "Membership"}
-                  </div>
-                  <div className="text-xs font-bold text-zinc-300">
-                    {countdownState === "expired"
-                      ? "Expired"
-                      : daysRemaining === 1
-                      ? "Day Left"
-                      : "Days Left"}
-                  </div>
-                </div>
-                <div
-                  className={`text-4xl sm:text-5xl font-black font-mono tabular-nums leading-none ${
-                    countdownState === "active"
-                      ? "text-lime-400"
-                      : countdownState === "expiring"
-                      ? "text-yellow-400"
-                      : "text-red-400"
-                  }`}
-                >
-                  {daysRemaining}
-                </div>
-              </div>
-            )}
           </div>
-
-          {/* EXPIRED ALERT BANNER (Instructs member to visit Reception) */}
-          {countdownState === "expired" && (
-            <motion.div
-              initial={{ opacity: 0, y: 8 }}
-              animate={{ opacity: 1, y: 0 }}
-              className="mt-4 rounded-2xl border border-red-500/40 bg-red-500/15 p-4 flex items-center gap-3 text-sm text-red-200 shadow-lg shadow-red-500/10"
-            >
-              <XCircle weight="fill" className="w-5 h-5 text-red-400 shrink-0" />
-              <div className="font-bold">
-                Your membership has expired. Please visit Reception to renew your membership.
-              </div>
-            </motion.div>
-          )}
-
-          {/* EXPIRING SOON WARNING BANNER */}
-          {countdownState === "expiring" && (
-            <motion.div
-              initial={{ opacity: 0, y: 8 }}
-              animate={{ opacity: 1, y: 0 }}
-              className="mt-4 rounded-2xl border border-yellow-400/40 bg-yellow-400/15 p-3.5 flex items-center gap-3 text-sm text-yellow-200"
-            >
-              <Warning weight="fill" className="w-5 h-5 text-yellow-400 shrink-0" />
-              <div>
-                Your membership is expiring soon (
-                <span className="font-bold text-white">
-                  {daysRemaining === 1 ? "1 day left" : `${daysRemaining} days left`}
-                </span>
-                ). Please visit Reception to renew your membership.
-              </div>
-            </motion.div>
-          )}
-        </div>
+        ) : countdownState === "expiring" ? (
+          <div className="rounded-xl border border-amber-800/60 bg-amber-950/80 p-2.5 sm:p-3 flex items-center gap-2.5 text-xs text-amber-200">
+            <Warning weight="fill" className="w-4 h-4 text-amber-400 shrink-0" />
+            <div>
+              Membership expiring soon (
+              <span className="font-bold text-white">
+                {daysRemaining === 1 ? "1 day left" : `${daysRemaining} days left`}
+              </span>
+              ). Please visit Reception to renew.
+            </div>
+          </div>
+        ) : hasActiveMembership ? (
+          <div className="pt-2 border-t border-zinc-800/80 flex items-center justify-between text-xs font-semibold text-zinc-400">
+            <span>Active Membership Cycle</span>
+            <span className="font-mono font-bold text-[#F5F5F5]">
+              {daysRemaining} {daysRemaining === 1 ? "day" : "days"} remaining
+            </span>
+          </div>
+        ) : null}
       </div>
     </div>
   );

@@ -383,7 +383,7 @@ export default function SteamManagement({
       )}
 
       {/* SUMMARY STATS (Today's Services & Today's Revenue) */}
-      <section className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+      <section className="grid grid-cols-1 min-[420px]:grid-cols-2 gap-3">
         <div className="rounded-2xl border border-zinc-800 bg-zinc-900/90 p-4 shadow-sm">
           <div className="text-[11px] font-bold uppercase tracking-wider text-zinc-400">Today's Services</div>
           <div className="mt-2 text-2xl font-black text-white">{stats.today_services}</div>
@@ -687,8 +687,7 @@ export default function SteamManagement({
 
       {/* SECTION 1: NEW STEAM SERVICE (RECEPTION ONLY) */}
       {activeTab === "new" && !isUserAdmin && (
-        <div className="grid gap-6 lg:grid-cols-3">
-          <div className="lg:col-span-2 space-y-6">
+        <div className="max-w-3xl space-y-6">
             {!activeOffering ? (
               <div className="rounded-2xl border border-amber-500/30 bg-amber-500/5 p-8 text-center space-y-4">
                 <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-amber-400/10 text-amber-400">
@@ -820,7 +819,7 @@ export default function SteamManagement({
                   <Coins weight="bold" className="h-4 w-4 text-cyan-400" />
                   2. Steam Service Offering & Configured Price (ETB) *
                 </label>
-                <div className="grid gap-3 sm:grid-cols-2">
+                <div className="grid gap-3 min-[420px]:grid-cols-2">
                   <div className="rounded-xl border border-zinc-700 bg-zinc-800/80 px-3.5 py-2.5 text-sm text-white flex items-center justify-between">
                     <span className="font-semibold text-zinc-200">{activeOffering?.name || "Steam / Sauna Service"}</span>
                     <span className="rounded-full bg-cyan-400/10 px-2 py-0.5 text-[10px] font-bold text-cyan-300">
@@ -852,7 +851,7 @@ export default function SteamManagement({
                   <Receipt weight="bold" className="h-4 w-4 text-cyan-400" />
                   3. Payment Method & Transaction Reference *
                 </label>
-                <div className="grid gap-3 sm:grid-cols-2">
+                <div className="grid gap-3 min-[420px]:grid-cols-2">
                   <select
                     value={paymentMethod}
                     onChange={e => {
@@ -976,39 +975,6 @@ export default function SteamManagement({
               </div>
             </form>
           )}
-          </div>
-
-          {/* Workflow Guide Info Card */}
-          <div className="space-y-4">
-            <div className="rounded-2xl border border-zinc-800 bg-zinc-900/80 p-5 space-y-4">
-              <h4 className="text-sm font-bold text-white uppercase tracking-wider flex items-center gap-2">
-                <Drop weight="fill" className="h-4 w-4 text-cyan-400" />
-                Streamlined Steam Workflow
-              </h4>
-              <ol className="space-y-3 text-xs text-zinc-300">
-                <li className="flex gap-2.5">
-                  <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-cyan-400/20 text-[11px] font-bold text-cyan-300">1</span>
-                  <span><strong>Select customer:</strong> Search and select their registered gym member record.</span>
-                </li>
-                <li className="flex gap-2.5">
-                  <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-cyan-400/20 text-[11px] font-bold text-cyan-300">2</span>
-                  <span><strong>Record payment:</strong> Upload photo evidence of cash payment or mobile transfer.</span>
-                </li>
-                <li className="flex gap-2.5">
-                  <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-cyan-400/20 text-[11px] font-bold text-cyan-300">3</span>
-                  <span><strong>Direct authorization:</strong> Reception immediately grants customer room access.</span>
-                </li>
-                <li className="flex gap-2.5">
-                  <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-cyan-400/20 text-[11px] font-bold text-cyan-300">4</span>
-                  <span><strong>Complete service:</strong> Mark service completed in History when the customer exits.</span>
-                </li>
-                <li className="flex gap-2.5">
-                  <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-lime-400/20 text-[11px] font-bold text-lime-300">5</span>
-                  <span><strong>Admin accountability:</strong> Full transaction, payment evidence, and responsible staff details automatically available to Admin for monitoring.</span>
-                </li>
-              </ol>
-            </div>
-          </div>
         </div>
       )}
 

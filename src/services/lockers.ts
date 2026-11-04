@@ -616,3 +616,66 @@ export async function createLockers(
     await createLocker(item);
   }
 }
+
+export interface CustomerLockerInfo {
+  lockerNumber: string;
+  location?: string | null;
+  keyNumber?: string | null;
+  assignedAt?: string | null;
+  dueDate?: string | null;
+  status: string;
+  notes?: string | null;
+}
+
+/**
+ * Retrieves the currently active locker assignment for an authenticated customer from Supabase.
+ * Returns null if no active locker assignment exists.
+ */
+export async function fetchCustomerActiveLocker(customerId: string): Promise<CustomerLockerInfo | null> {
+  if (!customerId) return null;
+  try {
+    const { data, error } = await supabase
+      .from("locker_assignments")
+      .select(`
+        id,
+        customer_id,
+        status,
+        assigned_at,
+        due_date,
+        notes,
+        lockers (
+          id,
+          locker_number,
+          key_number,
+          location,
+          status,
+          notes
+        )
+      `)
+      .eq("customer_id", customerId)
+      .in("status", ["ACTIVE", "active"])
+      .order("assigned_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (error || !data) return null;
+
+    const row = data as any;
+    const lockerRaw = (Array.isArray(row.lockers) ? row.lockers[0] : row.lockers) as any;
+    if (!lockerRaw || !lockerRaw.locker_number) return null;
+
+    return {
+      lockerNumber: lockerRaw.locker_number,
+      location: lockerRaw.location,
+      keyNumber: lockerRaw.key_number,
+      assignedAt: row.assigned_at,
+      dueDate: row.due_date,
+      status: row.status || lockerRaw.status || "ACTIVE",
+      notes: row.notes || lockerRaw.notes,
+    };
+  } catch (err) {
+    console.error("fetchCustomerActiveLocker error:", err);
+    return null;
+  }
+}
+

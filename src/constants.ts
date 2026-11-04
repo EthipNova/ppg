@@ -3,9 +3,11 @@ import type { Member, Plan, Payment, Expense, Visit, EmailLog, StaffUser, GymSet
 export const DEFAULT_SETTINGS: GymSettings = {
   gymName: "Power Plus Gym",
   tagline: "Train Strong. Stay Strong.",
+  description: "A premium gym with world-class equipment, expert coaches, and an energetic athletic community.",
   email: "info@powerplus.et",
   phone: "+251 911 234 567",
   address: "Bole Road, Addis Ababa, Ethiopia",
+  operatingHours: "Monday to Saturday: 05:00 AM – 11:00 PM | Sunday: 06:00 AM – 09:00 PM",
   inactivityThresholdDays: 14,
   currency: "Br",
   steamEnabled: true,

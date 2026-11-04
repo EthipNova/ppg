@@ -336,7 +336,7 @@ export function FinancesView() {
           <button onClick={() => void refresh()} className="font-semibold text-red-300 hover:text-white">Retry</button>
         </div>
       )}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 min-[420px]:grid-cols-2 md:grid-cols-3 gap-4">
         <div className={CARD}><div className="text-sm text-zinc-500 mb-1">Total revenue</div><div className="text-2xl font-black text-lime-400">{displayValue(formatETB(totalRevenue))}</div></div>
         <div className={CARD}><div className="text-sm text-zinc-500 mb-1">Total expenses</div><div className="text-2xl font-black text-red-400">{displayValue(formatETB(totalExpenses))}</div></div>
         <div className={CARD}><div className="text-sm text-zinc-500 mb-1">Net balance</div><div className={`text-2xl font-black ${netResult >= 0 ? "text-lime-400" : "text-red-400"}`}>{displayValue(formatETB(netResult))}</div></div>
