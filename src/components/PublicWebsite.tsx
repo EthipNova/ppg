@@ -349,11 +349,8 @@ export default function PublicWebsite({
             <p className="text-zinc-400 text-sm sm:text-lg md:text-xl max-w-2xl mx-auto mb-8 px-2">
               {state.settings.description || "A premium gym with world-class equipment, expert coaches and a community that pushes you further."}
             </p>
-            <div className="flex flex-col sm:flex-row gap-3 sm:gap-4 justify-center max-w-md sm:max-w-none mx-auto">
-              <button onClick={() => setShowJoinModal(true)} className="bg-lime-400 text-zinc-950 font-bold px-8 py-3.5 sm:py-4 rounded-xl hover:bg-lime-300 transition-colors text-base sm:text-lg active:scale-[0.98]">
-                Join now
-              </button>
-              <a href="#plans" className="border border-zinc-700 text-white font-semibold px-8 py-3.5 sm:py-4 rounded-xl hover:border-lime-400/50 transition-colors text-base sm:text-lg text-center active:scale-[0.98]">
+            <div className="flex justify-center max-w-xs sm:max-w-none mx-auto">
+              <a href="#plans" className="border border-zinc-700 hover:border-lime-400/50 text-white font-semibold px-8 py-3.5 sm:py-4 rounded-xl transition-colors text-base sm:text-lg text-center active:scale-[0.98] inline-block">
                 See memberships
               </a>
             </div>
