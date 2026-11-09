@@ -1,5 +1,28 @@
 import { supabase } from "../integrations/supabase/client";
-import type { CustomerCategory } from "../types";
+import type {
+  CustomerCategory,
+  ExerciseSetRecord,
+  MemberWeeklyScheduleItem,
+  WeekdayName,
+  ScheduledExerciseTemplate,
+} from "../types";
+
+export type {
+  ExerciseSetRecord,
+  MemberWeeklyScheduleItem,
+  WeekdayName,
+  ScheduledExerciseTemplate,
+};
+
+export const WEEKDAY_NAMES: WeekdayName[] = [
+  "Monday",
+  "Tuesday",
+  "Wednesday",
+  "Thursday",
+  "Friday",
+  "Saturday",
+  "Sunday",
+];
 
 const ptDb = supabase as any;
 
@@ -166,6 +189,8 @@ export interface WorkoutExercise {
   actual_weight_kg?: number | null;
   isCompleted?: boolean;
   is_completed?: boolean;
+  setsData?: ExerciseSetRecord[];
+  sets_data?: ExerciseSetRecord[];
   durationSeconds?: number;
   duration_seconds?: number | null;
   restSeconds?: number;
@@ -713,6 +738,7 @@ export async function fetchMemberWorkoutPlans(customerId: string): Promise<Worko
         actual_reps,
         actual_weight_kg,
         is_completed,
+        sets_data,
         duration_seconds,
         rest_seconds,
         instructions,
@@ -750,34 +776,58 @@ export async function fetchMemberWorkoutPlans(customerId: string): Promise<Worko
     exercises: (p.workout_exercises || [])
       .sort((a: any, b: any) => (a.order_index ?? 0) - (b.order_index ?? 0))
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      .map((e: any) => ({
-        id: e.id,
-        workoutPlanId: e.workout_plan_id,
-        dayOfWeek: e.day_of_week || "Day 1",
-        day_of_week: e.day_of_week || "Day 1",
-        exerciseName: e.exercise_name,
-        exercise_name: e.exercise_name,
-        notes: e.notes || e.instructions || "",
-        instructions: e.instructions || e.notes || "",
-        sets: Number(e.sets) || 3,
-        reps: e.reps || 10,
-        plannedReps: Number(e.planned_reps ?? e.reps ?? 10),
-        planned_reps: Number(e.planned_reps ?? e.reps ?? 10),
-        plannedWeightKg: e.planned_weight_kg != null ? Number(e.planned_weight_kg) : null,
-        planned_weight_kg: e.planned_weight_kg != null ? Number(e.planned_weight_kg) : null,
-        actualReps: e.actual_reps != null ? Number(e.actual_reps) : null,
-        actual_reps: e.actual_reps != null ? Number(e.actual_reps) : null,
-        actualWeightKg: e.actual_weight_kg != null ? Number(e.actual_weight_kg) : null,
-        actual_weight_kg: e.actual_weight_kg != null ? Number(e.actual_weight_kg) : null,
-        isCompleted: Boolean(e.is_completed),
-        is_completed: Boolean(e.is_completed),
-        durationSeconds: e.duration_seconds ? Number(e.duration_seconds) : undefined,
-        duration_seconds: e.duration_seconds ? Number(e.duration_seconds) : null,
-        restSeconds: e.rest_seconds ? Number(e.rest_seconds) : undefined,
-        rest_interval_seconds: e.rest_seconds ? Number(e.rest_seconds) : null,
-        videoUrl: e.video_url || undefined,
-        orderIndex: Number(e.order_index) || 0,
-      })),
+      .map((e: any) => {
+        const parsedSets: ExerciseSetRecord[] = Array.isArray(e.sets_data) && e.sets_data.length > 0
+          ? e.sets_data.map((s: any, sIdx: number) => ({
+              setNumber: Number(s.set_number || s.setNumber || sIdx + 1),
+              plannedReps: Number(s.planned_reps ?? s.plannedReps ?? 10),
+              plannedWeightKg: s.planned_weight_kg != null ? Number(s.planned_weight_kg) : (s.plannedWeightKg != null ? Number(s.plannedWeightKg) : null),
+              actualReps: s.actual_reps != null ? Number(s.actual_reps) : (s.actualReps != null ? Number(s.actualReps) : null),
+              actualWeightKg: s.actual_weight_kg != null ? Number(s.actual_weight_kg) : (s.actualWeightKg != null ? Number(s.actualWeightKg) : null),
+              isCompleted: Boolean(s.is_completed ?? s.isCompleted),
+            }))
+          : [
+              {
+                setNumber: 1,
+                plannedReps: Number(e.planned_reps ?? e.reps ?? 10),
+                plannedWeightKg: e.planned_weight_kg != null ? Number(e.planned_weight_kg) : null,
+                actualReps: e.actual_reps != null ? Number(e.actual_reps) : null,
+                actualWeightKg: e.actual_weight_kg != null ? Number(e.actual_weight_kg) : null,
+                isCompleted: Boolean(e.is_completed),
+              },
+            ];
+
+        return {
+          id: e.id,
+          workoutPlanId: e.workout_plan_id,
+          dayOfWeek: e.day_of_week || "Day 1",
+          day_of_week: e.day_of_week || "Day 1",
+          exerciseName: e.exercise_name,
+          exercise_name: e.exercise_name,
+          notes: e.notes || e.instructions || "",
+          instructions: e.instructions || e.notes || "",
+          sets: Number(e.sets) || parsedSets.length,
+          reps: e.reps || (parsedSets[0]?.plannedReps ?? 10),
+          plannedReps: Number(e.planned_reps ?? parsedSets[0]?.plannedReps ?? 10),
+          planned_reps: Number(e.planned_reps ?? parsedSets[0]?.plannedReps ?? 10),
+          plannedWeightKg: e.planned_weight_kg != null ? Number(e.planned_weight_kg) : parsedSets[0]?.plannedWeightKg,
+          planned_weight_kg: e.planned_weight_kg != null ? Number(e.planned_weight_kg) : parsedSets[0]?.plannedWeightKg,
+          actualReps: e.actual_reps != null ? Number(e.actual_reps) : parsedSets[0]?.actualReps,
+          actual_reps: e.actual_reps != null ? Number(e.actual_reps) : parsedSets[0]?.actualReps,
+          actualWeightKg: e.actual_weight_kg != null ? Number(e.actual_weight_kg) : parsedSets[0]?.actualWeightKg,
+          actual_weight_kg: e.actual_weight_kg != null ? Number(e.actual_weight_kg) : parsedSets[0]?.actualWeightKg,
+          isCompleted: Boolean(e.is_completed),
+          is_completed: Boolean(e.is_completed),
+          setsData: parsedSets,
+          sets_data: parsedSets,
+          durationSeconds: e.duration_seconds ? Number(e.duration_seconds) : undefined,
+          duration_seconds: e.duration_seconds ? Number(e.duration_seconds) : null,
+          restSeconds: e.rest_seconds ? Number(e.rest_seconds) : undefined,
+          rest_interval_seconds: e.rest_seconds ? Number(e.rest_seconds) : null,
+          videoUrl: e.video_url || undefined,
+          orderIndex: Number(e.order_index) || 0,
+        };
+      }),
   }));
 }
 
@@ -895,6 +945,7 @@ export async function fetchTrainerWorkoutPlans(trainerId: string): Promise<Worko
         actual_reps,
         actual_weight_kg,
         is_completed,
+        sets_data,
         duration_seconds,
         rest_seconds,
         instructions,
@@ -940,34 +991,58 @@ export async function fetchTrainerWorkoutPlans(trainerId: string): Promise<Worko
       createdAt: p.created_at,
       exercises: (p.workout_exercises || [])
         .sort((a: any, b: any) => (a.order_index ?? 0) - (b.order_index ?? 0))
-        .map((e: any) => ({
-          id: e.id,
-          workoutPlanId: e.workout_plan_id,
-          dayOfWeek: e.day_of_week || "Day 1",
-          day_of_week: e.day_of_week || "Day 1",
-          exerciseName: e.exercise_name,
-          exercise_name: e.exercise_name,
-          notes: e.notes || e.instructions || "",
-          instructions: e.instructions || e.notes || "",
-          sets: Number(e.sets) || 3,
-          reps: Number(e.reps) || 10,
-          plannedReps: Number(e.planned_reps ?? e.reps ?? 10),
-          planned_reps: Number(e.planned_reps ?? e.reps ?? 10),
-          plannedWeightKg: e.planned_weight_kg != null ? Number(e.planned_weight_kg) : null,
-          planned_weight_kg: e.planned_weight_kg != null ? Number(e.planned_weight_kg) : null,
-          actualReps: e.actual_reps != null ? Number(e.actual_reps) : null,
-          actual_reps: e.actual_reps != null ? Number(e.actual_reps) : null,
-          actualWeightKg: e.actual_weight_kg != null ? Number(e.actual_weight_kg) : null,
-          actual_weight_kg: e.actual_weight_kg != null ? Number(e.actual_weight_kg) : null,
-          isCompleted: Boolean(e.is_completed),
-          is_completed: Boolean(e.is_completed),
-          durationSeconds: e.duration_seconds ? Number(e.duration_seconds) : undefined,
-          duration_seconds: e.duration_seconds ? Number(e.duration_seconds) : null,
-          restSeconds: e.rest_seconds ? Number(e.rest_seconds) : undefined,
-          rest_interval_seconds: e.rest_seconds ? Number(e.rest_seconds) : null,
-          videoUrl: e.video_url || undefined,
-          orderIndex: Number(e.order_index) || 0,
-        })),
+        .map((e: any) => {
+          const parsedSets: ExerciseSetRecord[] = Array.isArray(e.sets_data) && e.sets_data.length > 0
+            ? e.sets_data.map((s: any, sIdx: number) => ({
+                setNumber: Number(s.set_number || s.setNumber || sIdx + 1),
+                plannedReps: Number(s.planned_reps ?? s.plannedReps ?? 10),
+                plannedWeightKg: s.planned_weight_kg != null ? Number(s.planned_weight_kg) : (s.plannedWeightKg != null ? Number(s.plannedWeightKg) : null),
+                actualReps: s.actual_reps != null ? Number(s.actual_reps) : (s.actualReps != null ? Number(s.actualReps) : null),
+                actualWeightKg: s.actual_weight_kg != null ? Number(s.actual_weight_kg) : (s.actualWeightKg != null ? Number(s.actualWeightKg) : null),
+                isCompleted: Boolean(s.is_completed ?? s.isCompleted),
+              }))
+            : [
+                {
+                  setNumber: 1,
+                  plannedReps: Number(e.planned_reps ?? e.reps ?? 10),
+                  plannedWeightKg: e.planned_weight_kg != null ? Number(e.planned_weight_kg) : null,
+                  actualReps: e.actual_reps != null ? Number(e.actual_reps) : null,
+                  actualWeightKg: e.actual_weight_kg != null ? Number(e.actual_weight_kg) : null,
+                  isCompleted: Boolean(e.is_completed),
+                },
+              ];
+
+          return {
+            id: e.id,
+            workoutPlanId: e.workout_plan_id,
+            dayOfWeek: e.day_of_week || "Day 1",
+            day_of_week: e.day_of_week || "Day 1",
+            exerciseName: e.exercise_name,
+            exercise_name: e.exercise_name,
+            notes: e.notes || e.instructions || "",
+            instructions: e.instructions || e.notes || "",
+            sets: Number(e.sets) || parsedSets.length,
+            reps: Number(e.reps) || (parsedSets[0]?.plannedReps ?? 10),
+            plannedReps: Number(e.planned_reps ?? parsedSets[0]?.plannedReps ?? 10),
+            planned_reps: Number(e.planned_reps ?? parsedSets[0]?.plannedReps ?? 10),
+            plannedWeightKg: e.planned_weight_kg != null ? Number(e.planned_weight_kg) : parsedSets[0]?.plannedWeightKg,
+            planned_weight_kg: e.planned_weight_kg != null ? Number(e.planned_weight_kg) : parsedSets[0]?.plannedWeightKg,
+            actualReps: e.actual_reps != null ? Number(e.actual_reps) : parsedSets[0]?.actualReps,
+            actual_reps: e.actual_reps != null ? Number(e.actual_reps) : parsedSets[0]?.actualReps,
+            actualWeightKg: e.actual_weight_kg != null ? Number(e.actual_weight_kg) : parsedSets[0]?.actualWeightKg,
+            actual_weight_kg: e.actual_weight_kg != null ? Number(e.actual_weight_kg) : parsedSets[0]?.actualWeightKg,
+            isCompleted: Boolean(e.is_completed),
+            is_completed: Boolean(e.is_completed),
+            setsData: parsedSets,
+            sets_data: parsedSets,
+            durationSeconds: e.duration_seconds ? Number(e.duration_seconds) : undefined,
+            duration_seconds: e.duration_seconds ? Number(e.duration_seconds) : null,
+            restSeconds: e.rest_seconds ? Number(e.rest_seconds) : undefined,
+            rest_interval_seconds: e.rest_seconds ? Number(e.rest_seconds) : null,
+            videoUrl: e.video_url || undefined,
+            orderIndex: Number(e.order_index) || 0,
+          };
+        }),
     };
   });
 }
@@ -1062,11 +1137,12 @@ export interface DigitalWorkoutExerciseInput {
   id?: string;
   exerciseName: string;
   notes?: string;
-  plannedReps: number;
-  plannedWeightKg?: number | null;
-  actualReps?: number | null;
-  actualWeightKg?: number | null;
+  plannedReps?: number;
+  plannedWeightKg?: number | string | null;
+  actualReps?: number | string | null;
+  actualWeightKg?: number | string | null;
   isCompleted?: boolean;
+  setsData?: ExerciseSetRecord[];
 }
 
 export interface SaveDigitalWorkoutLogParams {
@@ -1074,28 +1150,690 @@ export interface SaveDigitalWorkoutLogParams {
   customerId: string;
   trainerId: string;
   title: string;
-  workoutDate: string;
-  isCompleted: boolean;
-  status: "DRAFT" | "PUBLISHED" | "IN_PROGRESS" | "COMPLETED";
+  workoutDate?: string;
+  isCompleted?: boolean;
+  status?: "DRAFT" | "PUBLISHED" | "IN_PROGRESS" | "COMPLETED";
   exercises: DigitalWorkoutExerciseInput[];
 }
 
+/**
+ * Local gym timezone helper (UTC+3, Africa/Addis_Ababa).
+ * Returns today's date formatted as "YYYY-MM-DD".
+ */
+export function getGymTodayDate(): string {
+  try {
+    return new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Africa/Addis_Ababa",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(new Date());
+  } catch {
+    return new Date().toISOString().split("T")[0];
+  }
+}
+
+/**
+ * Local gym timezone helper (UTC+3, Africa/Addis_Ababa).
+ * Returns today's weekday name e.g. "Monday", "Tuesday", etc.
+ */
+export function getGymTodayWeekday(): WeekdayName {
+  try {
+    const raw = new Intl.DateTimeFormat("en-US", {
+      timeZone: "Africa/Addis_Ababa",
+      weekday: "long",
+    }).format(new Date());
+    const valid: WeekdayName[] = [
+      "Monday",
+      "Tuesday",
+      "Wednesday",
+      "Thursday",
+      "Friday",
+      "Saturday",
+      "Sunday",
+    ];
+    if (valid.includes(raw as WeekdayName)) return raw as WeekdayName;
+  } catch {
+    // fallback
+  }
+  const dayIdx = new Date().getDay(); // 0 is Sunday
+  const days: WeekdayName[] = [
+    "Sunday",
+    "Monday",
+    "Tuesday",
+    "Wednesday",
+    "Thursday",
+    "Friday",
+    "Saturday",
+  ];
+  return days[dayIdx];
+}
+
+/**
+ * Default 7-day balanced athletic weekly workout schedule.
+ */
+export const DEFAULT_WEEKLY_SCHEDULE: (
+  customerId: string,
+  trainerId?: string | null
+) => MemberWeeklyScheduleItem[] = (customerId: string, trainerId?: string | null) => [
+  {
+    customerId,
+    trainerId: trainerId || null,
+    dayOfWeek: "Monday",
+    workoutTitle: "Push (Chest, Shoulders & Triceps)",
+    isRestDay: false,
+    focusArea: "Chest & Triceps",
+    notes: "Controlled eccentrics, full range of motion.",
+    exercises: [
+      {
+        exerciseName: "Barbell Bench Press",
+        notes: "Warm up with 2 lighter sets, pause at chest",
+        sets: [
+          { setNumber: 1, plannedReps: 12, plannedWeightKg: 50 },
+          { setNumber: 2, plannedReps: 10, plannedWeightKg: 60 },
+          { setNumber: 3, plannedReps: 8, plannedWeightKg: 70 },
+        ],
+      },
+      {
+        exerciseName: "Incline Dumbbell Press",
+        notes: "Maintain 30-degree incline angle",
+        sets: [
+          { setNumber: 1, plannedReps: 12, plannedWeightKg: 20 },
+          { setNumber: 2, plannedReps: 10, plannedWeightKg: 24 },
+          { setNumber: 3, plannedReps: 10, plannedWeightKg: 24 },
+        ],
+      },
+      {
+        exerciseName: "Tricep Rope Pushdowns",
+        notes: "Lock elbows to side, flare out at bottom",
+        sets: [
+          { setNumber: 1, plannedReps: 15, plannedWeightKg: 20 },
+          { setNumber: 2, plannedReps: 12, plannedWeightKg: 25 },
+          { setNumber: 3, plannedReps: 12, plannedWeightKg: 25 },
+        ],
+      },
+    ],
+  },
+  {
+    customerId,
+    trainerId: trainerId || null,
+    dayOfWeek: "Tuesday",
+    workoutTitle: "Pull (Back & Biceps)",
+    isRestDay: false,
+    focusArea: "Back & Biceps",
+    notes: "Squeeze shoulder blades together on every contraction.",
+    exercises: [
+      {
+        exerciseName: "Lat Pulldowns",
+        notes: "Pull bar to upper chest, keep torso upright",
+        sets: [
+          { setNumber: 1, plannedReps: 12, plannedWeightKg: 45 },
+          { setNumber: 2, plannedReps: 10, plannedWeightKg: 55 },
+          { setNumber: 3, plannedReps: 8, plannedWeightKg: 65 },
+        ],
+      },
+      {
+        exerciseName: "Barbell Bent-Over Rows",
+        notes: "Neutral spine, hinge at hips",
+        sets: [
+          { setNumber: 1, plannedReps: 10, plannedWeightKg: 40 },
+          { setNumber: 2, plannedReps: 10, plannedWeightKg: 50 },
+          { setNumber: 3, plannedReps: 8, plannedWeightKg: 55 },
+        ],
+      },
+      {
+        exerciseName: "Standing Incline Dumbbell Bicep Curls",
+        notes: "Full range of motion, avoid swinging torso",
+        sets: [
+          { setNumber: 1, plannedReps: 12, plannedWeightKg: 12 },
+          { setNumber: 2, plannedReps: 10, plannedWeightKg: 14 },
+          { setNumber: 3, plannedReps: 10, plannedWeightKg: 14 },
+        ],
+      },
+    ],
+  },
+  {
+    customerId,
+    trainerId: trainerId || null,
+    dayOfWeek: "Wednesday",
+    workoutTitle: "Legs (Quads, Hamstrings & Calves)",
+    isRestDay: false,
+    focusArea: "Lower Body",
+    notes: "Full squat depth, control the descent.",
+    exercises: [
+      {
+        exerciseName: "Barbell Back Squats",
+        notes: "Drive through midfoot, keep chest up",
+        sets: [
+          { setNumber: 1, plannedReps: 10, plannedWeightKg: 60 },
+          { setNumber: 2, plannedReps: 8, plannedWeightKg: 75 },
+          { setNumber: 3, plannedReps: 8, plannedWeightKg: 85 },
+        ],
+      },
+      {
+        exerciseName: "Leg Press",
+        notes: "Shoulder-width stance, do not hyperextend knees",
+        sets: [
+          { setNumber: 1, plannedReps: 12, plannedWeightKg: 120 },
+          { setNumber: 2, plannedReps: 10, plannedWeightKg: 140 },
+          { setNumber: 3, plannedReps: 10, plannedWeightKg: 160 },
+        ],
+      },
+      {
+        exerciseName: "Standing Calf Raises",
+        notes: "Pause 2 seconds at top contraction",
+        sets: [
+          { setNumber: 1, plannedReps: 15, plannedWeightKg: 40 },
+          { setNumber: 2, plannedReps: 15, plannedWeightKg: 50 },
+          { setNumber: 3, plannedReps: 15, plannedWeightKg: 50 },
+        ],
+      },
+    ],
+  },
+  {
+    customerId,
+    trainerId: trainerId || null,
+    dayOfWeek: "Thursday",
+    workoutTitle: "Rest & Active Recovery",
+    isRestDay: true,
+    focusArea: "Recovery & Hydration",
+    notes: "Light walking, sauna/steam session, dynamic stretching and ample water intake.",
+    exercises: [],
+  },
+  {
+    customerId,
+    trainerId: trainerId || null,
+    dayOfWeek: "Friday",
+    workoutTitle: "Upper Body Hypertrophy",
+    isRestDay: false,
+    focusArea: "Upper Body Balance",
+    notes: "Strict form, focus on muscle mind connection.",
+    exercises: [
+      {
+        exerciseName: "Dumbbell Overhead Shoulder Press",
+        notes: "Press overhead without hyper-arching lower back",
+        sets: [
+          { setNumber: 1, plannedReps: 12, plannedWeightKg: 16 },
+          { setNumber: 2, plannedReps: 10, plannedWeightKg: 18 },
+          { setNumber: 3, plannedReps: 8, plannedWeightKg: 20 },
+        ],
+      },
+      {
+        exerciseName: "Seated Cable Row",
+        notes: "Squeeze mid-back at contraction",
+        sets: [
+          { setNumber: 1, plannedReps: 12, plannedWeightKg: 45 },
+          { setNumber: 2, plannedReps: 10, plannedWeightKg: 50 },
+          { setNumber: 3, plannedReps: 10, plannedWeightKg: 55 },
+        ],
+      },
+      {
+        exerciseName: "Dumbbell Lateral Raises",
+        notes: "Lead with elbows, controlled negative",
+        sets: [
+          { setNumber: 1, plannedReps: 15, plannedWeightKg: 8 },
+          { setNumber: 2, plannedReps: 15, plannedWeightKg: 10 },
+          { setNumber: 3, plannedReps: 12, plannedWeightKg: 10 },
+        ],
+      },
+    ],
+  },
+  {
+    customerId,
+    trainerId: trainerId || null,
+    dayOfWeek: "Saturday",
+    workoutTitle: "Core & Conditioning",
+    isRestDay: false,
+    focusArea: "Core & Athletic Fitness",
+    notes: "High intensity, short rest intervals.",
+    exercises: [
+      {
+        exerciseName: "Hanging Knee / Leg Raises",
+        notes: "Control swing, flex lower abs at apex",
+        sets: [
+          { setNumber: 1, plannedReps: 15, plannedWeightKg: 0 },
+          { setNumber: 2, plannedReps: 12, plannedWeightKg: 0 },
+          { setNumber: 3, plannedReps: 12, plannedWeightKg: 0 },
+        ],
+      },
+      {
+        exerciseName: "Kettlebell Swings",
+        notes: "Explosive hip hinge movement",
+        sets: [
+          { setNumber: 1, plannedReps: 20, plannedWeightKg: 16 },
+          { setNumber: 2, plannedReps: 20, plannedWeightKg: 20 },
+          { setNumber: 3, plannedReps: 15, plannedWeightKg: 24 },
+        ],
+      },
+      {
+        exerciseName: "Plank Hold",
+        notes: "Brace glutes and core tightly (seconds)",
+        sets: [
+          { setNumber: 1, plannedReps: 60, plannedWeightKg: 0 },
+          { setNumber: 2, plannedReps: 45, plannedWeightKg: 0 },
+          { setNumber: 3, plannedReps: 45, plannedWeightKg: 0 },
+        ],
+      },
+    ],
+  },
+  {
+    customerId,
+    trainerId: trainerId || null,
+    dayOfWeek: "Sunday",
+    workoutTitle: "Rest Day",
+    isRestDay: true,
+    focusArea: "Full Rest",
+    notes: "Rest and nutrition preparation for the training week ahead.",
+    exercises: [],
+  },
+];
+
+/**
+ * Fetches the weekly workout schedule for a member from Supabase.
+ * Returns all 7 days Monday-Sunday guaranteed.
+ */
+export async function fetchMemberWeeklySchedule(
+  customerId: string,
+  trainerId?: string | null
+): Promise<MemberWeeklyScheduleItem[]> {
+  try {
+    const { data, error } = await supabase
+      .from("member_workout_schedules")
+      .select("*")
+      .eq("customer_id", customerId);
+
+    const defaultSched = DEFAULT_WEEKLY_SCHEDULE(customerId, trainerId);
+
+    if (error || !data || data.length === 0) {
+      return defaultSched;
+    }
+
+    const dayOrder: WeekdayName[] = [
+      "Monday",
+      "Tuesday",
+      "Wednesday",
+      "Thursday",
+      "Friday",
+      "Saturday",
+      "Sunday",
+    ];
+    const scheduleByDay = new Map<string, any>();
+    data.forEach((row: any) => scheduleByDay.set(row.day_of_week, row));
+
+    return dayOrder.map(day => {
+      const existing = scheduleByDay.get(day);
+      if (!existing) {
+        return defaultSched.find(d => d.dayOfWeek === day)!;
+      }
+      return {
+        id: existing.id,
+        customerId: existing.customer_id,
+        trainerId: existing.trainer_id,
+        dayOfWeek: existing.day_of_week as WeekdayName,
+        workoutTitle: existing.workout_title,
+        isRestDay: Boolean(existing.is_rest_day),
+        focusArea: existing.focus_area || "",
+        notes: existing.notes || "",
+        exercises: Array.isArray(existing.exercises) ? existing.exercises : [],
+        createdAt: existing.created_at,
+        updatedAt: existing.updated_at,
+      };
+    });
+  } catch (err) {
+    console.warn("fetchMemberWeeklySchedule error, returning default schedule:", err);
+    return DEFAULT_WEEKLY_SCHEDULE(customerId, trainerId);
+  }
+}
+
+/**
+ * Persists the member's 7-day weekly schedule in Supabase.
+ * Editing the schedule does NOT modify previously recorded workout sessions.
+ */
+export async function saveMemberWeeklySchedule(
+  customerId: string,
+  trainerId: string | null,
+  schedule: MemberWeeklyScheduleItem[]
+): Promise<void> {
+  const rows = schedule.map(item => ({
+    customer_id: customerId,
+    trainer_id: trainerId || null,
+    day_of_week: item.dayOfWeek,
+    workout_title: item.workoutTitle.trim() || (item.isRestDay ? "Rest Day" : "Workout Routine"),
+    is_rest_day: Boolean(item.isRestDay),
+    focus_area: item.focusArea?.trim() || "",
+    notes: item.notes?.trim() || "",
+    exercises: item.exercises || [],
+    updated_at: new Date().toISOString(),
+  }));
+
+  const { error } = await (supabase.from("member_workout_schedules") as any).upsert(rows, {
+    onConflict: "customer_id, day_of_week",
+  });
+
+  if (error) {
+    console.error("saveMemberWeeklySchedule error:", error);
+    throw new Error(error.message);
+  }
+}
+
+/**
+ * Automatically detects today's date in local gym timezone (Africa/Addis_Ababa, UTC+3),
+ * determines the weekday, checks for an existing session on that date (to prevent duplicates),
+ * and loads the assigned routine from the weekly schedule.
+ */
+export async function fetchTodayAssignedWorkout(
+  customerId: string,
+  trainerId?: string | null
+): Promise<{
+  todayDate: string;
+  weekday: WeekdayName;
+  scheduleItem: MemberWeeklyScheduleItem | null;
+  existingSession: WorkoutPlan | null;
+}> {
+  const todayDate = getGymTodayDate();
+  const weekday = getGymTodayWeekday();
+
+  // 1. Check if a session already exists for this member on today's date
+  const { data: plansData } = await supabase
+    .from("workout_plans")
+    .select(`
+      id,
+      customer_id,
+      trainer_id,
+      title,
+      description,
+      workout_date,
+      is_completed,
+      start_date,
+      end_date,
+      status,
+      is_template,
+      created_at,
+      workout_exercises (
+        id,
+        workout_plan_id,
+        day_of_week,
+        exercise_name,
+        notes,
+        sets,
+        reps,
+        planned_reps,
+        planned_weight_kg,
+        actual_reps,
+        actual_weight_kg,
+        is_completed,
+        sets_data,
+        order_index
+      )
+    `)
+    .eq("customer_id", customerId)
+    .eq("workout_date", todayDate)
+    .maybeSingle();
+
+  let existingSession: WorkoutPlan | null = null;
+  if (plansData) {
+    const p: any = plansData;
+    existingSession = {
+      id: p.id,
+      customerId: p.customer_id,
+      trainerId: p.trainer_id,
+      title: p.title,
+      description: p.description,
+      workoutDate: p.workout_date || todayDate,
+      startDate: p.start_date || todayDate,
+      endDate: p.end_date,
+      status: p.status as WorkoutPlanStatus,
+      isCompleted: Boolean(p.is_completed),
+      isTemplate: false,
+      createdAt: p.created_at,
+      exercises: (p.workout_exercises || [])
+        .sort((a: any, b: any) => (a.order_index ?? 0) - (b.order_index ?? 0))
+        .map((e: any) => {
+          const parsedSets: ExerciseSetRecord[] =
+            Array.isArray(e.sets_data) && e.sets_data.length > 0
+              ? e.sets_data.map((s: any, sIdx: number) => ({
+                  setNumber: Number(s.set_number || s.setNumber || sIdx + 1),
+                  plannedReps: Number(s.planned_reps ?? s.plannedReps ?? 10),
+                  plannedWeightKg:
+                    s.planned_weight_kg != null
+                      ? Number(s.planned_weight_kg)
+                      : s.plannedWeightKg != null
+                      ? Number(s.plannedWeightKg)
+                      : null,
+                  actualReps:
+                    s.actual_reps != null
+                      ? Number(s.actual_reps)
+                      : s.actualReps != null
+                      ? Number(s.actualReps)
+                      : null,
+                  actualWeightKg:
+                    s.actual_weight_kg != null
+                      ? Number(s.actual_weight_kg)
+                      : s.actualWeightKg != null
+                      ? Number(s.actualWeightKg)
+                      : null,
+                  isCompleted: Boolean(s.is_completed ?? s.isCompleted),
+                }))
+              : [
+                  {
+                    setNumber: 1,
+                    plannedReps: Number(e.planned_reps ?? e.reps ?? 10),
+                    plannedWeightKg:
+                      e.planned_weight_kg != null ? Number(e.planned_weight_kg) : null,
+                    actualReps: e.actual_reps != null ? Number(e.actual_reps) : null,
+                    actualWeightKg:
+                      e.actual_weight_kg != null ? Number(e.actual_weight_kg) : null,
+                    isCompleted: Boolean(e.is_completed),
+                  },
+                ];
+
+          return {
+            id: e.id,
+            workoutPlanId: e.workout_plan_id,
+            dayOfWeek: e.day_of_week || weekday,
+            exerciseName: e.exercise_name,
+            notes: e.notes || "",
+            sets: Number(e.sets) || parsedSets.length,
+            reps: e.reps || 10,
+            plannedReps: Number(e.planned_reps ?? parsedSets[0]?.plannedReps ?? 10),
+            plannedWeightKg:
+              e.planned_weight_kg != null
+                ? Number(e.planned_weight_kg)
+                : parsedSets[0]?.plannedWeightKg,
+            actualReps:
+              e.actual_reps != null ? Number(e.actual_reps) : parsedSets[0]?.actualReps,
+            actualWeightKg:
+              e.actual_weight_kg != null
+                ? Number(e.actual_weight_kg)
+                : parsedSets[0]?.actualWeightKg,
+            isCompleted: Boolean(e.is_completed),
+            setsData: parsedSets,
+            sets_data: parsedSets,
+            orderIndex: Number(e.order_index) || 0,
+          };
+        }),
+    };
+  }
+
+  // 2. Fetch the weekly schedule for this member
+  const schedule = await fetchMemberWeeklySchedule(customerId, trainerId);
+  const scheduleItem = schedule.find(s => s.dayOfWeek === weekday) || null;
+
+  return {
+    todayDate,
+    weekday,
+    scheduleItem,
+    existingSession,
+  };
+}
+
+/**
+ * Fetches previous workout sessions for this member to display in Excel-like comparison columns.
+ */
+export async function fetchMemberWorkoutHistoryForComparison(
+  customerId: string,
+  limit = 5
+): Promise<WorkoutPlan[]> {
+  try {
+    const { data, error } = await supabase
+      .from("workout_plans")
+      .select(`
+        id,
+        customer_id,
+        trainer_id,
+        title,
+        description,
+        workout_date,
+        is_completed,
+        status,
+        created_at,
+        workout_exercises (
+          id,
+          workout_plan_id,
+          day_of_week,
+          exercise_name,
+          notes,
+          sets,
+          planned_reps,
+          planned_weight_kg,
+          actual_reps,
+          actual_weight_kg,
+          is_completed,
+          sets_data,
+          order_index
+        )
+      `)
+      .eq("customer_id", customerId)
+      .order("workout_date", { ascending: false })
+      .limit(limit);
+
+    if (error || !data) return [];
+
+    return data.map((p: any) => ({
+      id: p.id,
+      customerId: p.customer_id,
+      trainerId: p.trainer_id,
+      title: p.title,
+      description: p.description,
+      workoutDate: p.workout_date || p.created_at?.split("T")[0],
+      startDate: p.workout_date || p.created_at?.split("T")[0],
+      endDate: null,
+      status: p.status,
+      isCompleted: Boolean(p.is_completed),
+      isTemplate: false,
+      createdAt: p.created_at,
+      exercises: (p.workout_exercises || [])
+        .sort((a: any, b: any) => (a.order_index ?? 0) - (b.order_index ?? 0))
+        .map((e: any) => {
+          const parsedSets: ExerciseSetRecord[] =
+            Array.isArray(e.sets_data) && e.sets_data.length > 0
+              ? e.sets_data.map((s: any, sIdx: number) => ({
+                  setNumber: Number(s.set_number || s.setNumber || sIdx + 1),
+                  plannedReps: Number(s.planned_reps ?? s.plannedReps ?? 10),
+                  plannedWeightKg:
+                    s.planned_weight_kg != null
+                      ? Number(s.planned_weight_kg)
+                      : s.plannedWeightKg != null
+                      ? Number(s.plannedWeightKg)
+                      : null,
+                  actualReps:
+                    s.actual_reps != null
+                      ? Number(s.actual_reps)
+                      : s.actualReps != null
+                      ? Number(s.actualReps)
+                      : null,
+                  actualWeightKg:
+                    s.actual_weight_kg != null
+                      ? Number(s.actual_weight_kg)
+                      : s.actualWeightKg != null
+                      ? Number(s.actualWeightKg)
+                      : null,
+                  isCompleted: Boolean(s.is_completed ?? s.isCompleted),
+                }))
+              : [
+                  {
+                    setNumber: 1,
+                    plannedReps: Number(e.planned_reps ?? 10),
+                    plannedWeightKg:
+                      e.planned_weight_kg != null ? Number(e.planned_weight_kg) : null,
+                    actualReps: e.actual_reps != null ? Number(e.actual_reps) : null,
+                    actualWeightKg:
+                      e.actual_weight_kg != null ? Number(e.actual_weight_kg) : null,
+                    isCompleted: Boolean(e.is_completed),
+                  },
+                ];
+
+          return {
+            id: e.id,
+            workoutPlanId: e.workout_plan_id,
+            dayOfWeek: e.day_of_week || "Day 1",
+            exerciseName: e.exercise_name,
+            notes: e.notes || "",
+            sets: Number(e.sets) || parsedSets.length,
+            reps: parsedSets[0]?.plannedReps || 10,
+            plannedReps: Number(e.planned_reps ?? parsedSets[0]?.plannedReps ?? 10),
+            plannedWeightKg:
+              e.planned_weight_kg != null
+                ? Number(e.planned_weight_kg)
+                : parsedSets[0]?.plannedWeightKg,
+            actualReps:
+              e.actual_reps != null ? Number(e.actual_reps) : parsedSets[0]?.actualReps,
+            actualWeightKg:
+              e.actual_weight_kg != null
+                ? Number(e.actual_weight_kg)
+                : parsedSets[0]?.actualWeightKg,
+            isCompleted: Boolean(e.is_completed),
+            setsData: parsedSets,
+            sets_data: parsedSets,
+            orderIndex: Number(e.order_index) || 0,
+          };
+        }),
+    }));
+  } catch (err) {
+    console.warn("fetchMemberWorkoutHistoryForComparison error:", err);
+    return [];
+  }
+}
+
+/**
+ * Persists a workout session with multi-set performance.
+ * - Single Save workflow: immediately commits session and marks visible.
+ * - Prevents duplicate sessions on the same date for the member.
+ * - Updates sets_data and individual set values cleanly.
+ */
 export async function saveDigitalWorkoutLog(
   params: SaveDigitalWorkoutLogParams
 ): Promise<string> {
-  const isPublishing = params.status === "PUBLISHED" || params.status === "COMPLETED";
+  const sessionStatus = params.status || "PUBLISHED";
+  const workoutDate = params.workoutDate || getGymTodayDate();
+
+  let planId = params.id;
+
+  // Prevent duplicate sessions on the same date:
+  // If no ID is passed, check if a session already exists for today & this member
+  if (!planId && params.customerId) {
+    const { data: existing } = await ptDb
+      .from("workout_plans")
+      .select("id")
+      .eq("customer_id", params.customerId)
+      .eq("workout_date", workoutDate)
+      .maybeSingle();
+
+    if (existing?.id) {
+      planId = existing.id;
+    }
+  }
+
   const planData: any = {
     customer_id: params.customerId,
     trainer_id: params.trainerId,
     title: params.title.trim() || "Workout Session",
-    workout_date: params.workoutDate || new Date().toISOString().split("T")[0],
-    start_date: params.workoutDate || new Date().toISOString().split("T")[0],
-    status: params.status,
+    workout_date: workoutDate,
+    start_date: workoutDate,
+    status: sessionStatus,
     is_completed: Boolean(params.isCompleted),
     updated_at: new Date().toISOString(),
   };
-
-  let planId = params.id;
 
   if (planId) {
     const { error: updErr } = await ptDb.from("workout_plans").update(planData).eq("id", planId);
@@ -1112,31 +1850,77 @@ export async function saveDigitalWorkoutLog(
   }
 
   if (params.exercises.length > 0) {
-    const rows = params.exercises.map((ex, idx) => ({
-      workout_plan_id: planId,
-      day_of_week: "Day 1",
-      exercise_name: ex.exerciseName.trim(),
-      notes: ex.notes?.trim() || null,
-      instructions: ex.notes?.trim() || null,
-      sets: 3,
-      reps: ex.plannedReps || 10,
-      planned_reps: ex.plannedReps || 10,
-      planned_weight_kg: ex.plannedWeightKg != null ? Number(ex.plannedWeightKg) : null,
-      actual_reps: ex.actualReps != null ? Number(ex.actualReps) : null,
-      actual_weight_kg: ex.actualWeightKg != null ? Number(ex.actualWeightKg) : null,
-      is_completed: Boolean(ex.isCompleted),
-      order_index: idx,
-    }));
+    const rows = params.exercises.map((ex, idx) => {
+      const sets: ExerciseSetRecord[] =
+        Array.isArray(ex.setsData) && ex.setsData.length > 0
+          ? ex.setsData.map((s, sIdx) => ({
+              setNumber: s.setNumber || sIdx + 1,
+              plannedReps: Number(s.plannedReps ?? 10),
+              plannedWeightKg:
+                s.plannedWeightKg != null && !isNaN(Number(s.plannedWeightKg))
+                  ? Number(s.plannedWeightKg)
+                  : null,
+              actualReps:
+                s.actualReps != null && !isNaN(Number(s.actualReps))
+                  ? Number(s.actualReps)
+                  : null,
+              actualWeightKg:
+                s.actualWeightKg != null && !isNaN(Number(s.actualWeightKg))
+                  ? Number(s.actualWeightKg)
+                  : null,
+              isCompleted: Boolean(s.isCompleted),
+            }))
+          : [
+              {
+                setNumber: 1,
+                plannedReps: Number(ex.plannedReps ?? 10),
+                plannedWeightKg:
+                  ex.plannedWeightKg != null && !isNaN(Number(ex.plannedWeightKg))
+                    ? Number(ex.plannedWeightKg)
+                    : null,
+                actualReps:
+                  ex.actualReps != null && !isNaN(Number(ex.actualReps))
+                    ? Number(ex.actualReps)
+                    : null,
+                actualWeightKg:
+                  ex.actualWeightKg != null && !isNaN(Number(ex.actualWeightKg))
+                    ? Number(ex.actualWeightKg)
+                    : null,
+                isCompleted: Boolean(ex.isCompleted),
+              },
+            ];
+
+      const firstSet = sets[0];
+      const allCompleted = sets.every(s => s.isCompleted);
+
+      return {
+        workout_plan_id: planId,
+        day_of_week: "Day 1",
+        exercise_name: ex.exerciseName.trim(),
+        notes: ex.notes?.trim() || null,
+        instructions: ex.notes?.trim() || null,
+        sets: sets.length,
+        reps: firstSet.plannedReps || 10,
+        planned_reps: firstSet.plannedReps || 10,
+        planned_weight_kg: firstSet.plannedWeightKg,
+        actual_reps: firstSet.actualReps,
+        actual_weight_kg: firstSet.actualWeightKg,
+        is_completed: allCompleted,
+        sets_data: sets,
+        order_index: idx,
+      };
+    });
 
     const { error: exErr } = await ptDb.from("workout_exercises").insert(rows);
     if (exErr) throw new Error(exErr.message);
   }
 
-  if (isPublishing && params.customerId) {
+  // Notify member
+  if (sessionStatus !== "DRAFT" && params.customerId) {
     await createInAppNotification({
       customerId: params.customerId,
-      title: "New Workout Log Published",
-      message: `Your coach published your workout session for ${params.workoutDate}: ${params.title.trim()}`,
+      title: "Workout Session Logged",
+      message: `Your coach logged your workout session for ${workoutDate}: ${params.title.trim()}`,
       type: "WORKOUT_PUBLISHED",
     });
   }
@@ -2338,6 +3122,8 @@ export interface CustomerActiveTrainerInfo {
 export interface CustomerMyTrainerBundle {
   hasActiveTrainer: boolean;
   trainer: CustomerActiveTrainerInfo | null;
+  weeklySchedule?: MemberWeeklyScheduleItem[];
+  weekly_schedule?: MemberWeeklyScheduleItem[];
   workoutPlans: WorkoutPlan[];
   mealPlans: MealPlan[];
   exerciseVideos: ExerciseVideo[];
@@ -2532,35 +3318,109 @@ export async function fetchCustomerMyTrainerBundle(
         isTemplate: false,
         createdAt: wp.created_at,
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        exercises: (wp.exercises || []).map((ex: any) => ({
-          id: ex.id,
-          workoutPlanId: wp.id,
-          dayOfWeek: ex.day_of_week || "Day 1",
-          day_of_week: ex.day_of_week || "Day 1",
-          exerciseName: ex.exercise_name,
-          exercise_name: ex.exercise_name,
-          notes: ex.notes || ex.instructions || "",
-          instructions: ex.instructions || ex.notes || "",
-          sets: Number(ex.sets) || 3,
-          reps: ex.reps || 10,
-          plannedReps: Number(ex.planned_reps ?? ex.reps ?? 10),
-          planned_reps: Number(ex.planned_reps ?? ex.reps ?? 10),
-          plannedWeightKg: ex.planned_weight_kg != null ? Number(ex.planned_weight_kg) : null,
-          planned_weight_kg: ex.planned_weight_kg != null ? Number(ex.planned_weight_kg) : null,
-          actualReps: ex.actual_reps != null ? Number(ex.actual_reps) : null,
-          actual_reps: ex.actual_reps != null ? Number(ex.actual_reps) : null,
-          actualWeightKg: ex.actual_weight_kg != null ? Number(ex.actual_weight_kg) : null,
-          actual_weight_kg: ex.actual_weight_kg != null ? Number(ex.actual_weight_kg) : null,
-          isCompleted: Boolean(ex.is_completed),
-          is_completed: Boolean(ex.is_completed),
-          durationSeconds: ex.duration_seconds ? Number(ex.duration_seconds) : undefined,
-          duration_seconds: ex.duration_seconds ? Number(ex.duration_seconds) : null,
-          restSeconds: ex.rest_seconds ? Number(ex.rest_seconds) : undefined,
-          rest_interval_seconds: ex.rest_seconds ? Number(ex.rest_seconds) : null,
-          videoUrl: ex.video_url || undefined,
-          orderIndex: Number(ex.order_index) || 0,
-        })),
+        exercises: (wp.exercises || []).map((ex: any) => {
+          const parsedSets: ExerciseSetRecord[] =
+            Array.isArray(ex.sets_data) && ex.sets_data.length > 0
+              ? ex.sets_data.map((s: any, sIdx: number) => ({
+                  setNumber: Number(s.set_number || s.setNumber || sIdx + 1),
+                  plannedReps: Number(s.planned_reps ?? s.plannedReps ?? 10),
+                  plannedWeightKg:
+                    s.planned_weight_kg != null
+                      ? Number(s.planned_weight_kg)
+                      : s.plannedWeightKg != null
+                      ? Number(s.plannedWeightKg)
+                      : null,
+                  actualReps:
+                    s.actual_reps != null
+                      ? Number(s.actual_reps)
+                      : s.actualReps != null
+                      ? Number(s.actualReps)
+                      : null,
+                  actualWeightKg:
+                    s.actual_weight_kg != null
+                      ? Number(s.actual_weight_kg)
+                      : s.actualWeightKg != null
+                      ? Number(s.actualWeightKg)
+                      : null,
+                  isCompleted: Boolean(s.is_completed ?? s.isCompleted),
+                }))
+              : [
+                  {
+                    setNumber: 1,
+                    plannedReps: Number(ex.planned_reps ?? ex.reps ?? 10),
+                    plannedWeightKg:
+                      ex.planned_weight_kg != null ? Number(ex.planned_weight_kg) : null,
+                    actualReps: ex.actual_reps != null ? Number(ex.actual_reps) : null,
+                    actualWeightKg:
+                      ex.actual_weight_kg != null ? Number(ex.actual_weight_kg) : null,
+                    isCompleted: Boolean(ex.is_completed),
+                  },
+                ];
+
+          return {
+            id: ex.id,
+            workoutPlanId: wp.id,
+            dayOfWeek: ex.day_of_week || "Day 1",
+            day_of_week: ex.day_of_week || "Day 1",
+            exerciseName: ex.exercise_name,
+            exercise_name: ex.exercise_name,
+            notes: ex.notes || ex.instructions || "",
+            instructions: ex.instructions || ex.notes || "",
+            sets: Number(ex.sets) || parsedSets.length,
+            reps: ex.reps || (parsedSets[0]?.plannedReps ?? 10),
+            plannedReps: Number(ex.planned_reps ?? parsedSets[0]?.plannedReps ?? 10),
+            planned_reps: Number(ex.planned_reps ?? parsedSets[0]?.plannedReps ?? 10),
+            plannedWeightKg:
+              ex.planned_weight_kg != null
+                ? Number(ex.planned_weight_kg)
+                : parsedSets[0]?.plannedWeightKg,
+            planned_weight_kg:
+              ex.planned_weight_kg != null
+                ? Number(ex.planned_weight_kg)
+                : parsedSets[0]?.plannedWeightKg,
+            actualReps:
+              ex.actual_reps != null ? Number(ex.actual_reps) : parsedSets[0]?.actualReps,
+            actual_reps:
+              ex.actual_reps != null ? Number(ex.actual_reps) : parsedSets[0]?.actualReps,
+            actualWeightKg:
+              ex.actual_weight_kg != null
+                ? Number(ex.actual_weight_kg)
+                : parsedSets[0]?.actualWeightKg,
+            actual_weight_kg:
+              ex.actual_weight_kg != null
+                ? Number(ex.actual_weight_kg)
+                : parsedSets[0]?.actualWeightKg,
+            isCompleted: Boolean(ex.is_completed),
+            is_completed: Boolean(ex.is_completed),
+            setsData: parsedSets,
+            sets_data: parsedSets,
+            durationSeconds: ex.duration_seconds ? Number(ex.duration_seconds) : undefined,
+            duration_seconds: ex.duration_seconds ? Number(ex.duration_seconds) : null,
+            restSeconds: ex.rest_seconds ? Number(ex.rest_seconds) : undefined,
+            rest_interval_seconds: ex.rest_seconds ? Number(ex.rest_seconds) : null,
+            videoUrl: ex.video_url || undefined,
+            orderIndex: Number(ex.order_index) || 0,
+          };
+        }),
       }));
+
+      // Map weekly schedule
+      const weeklySchedule: MemberWeeklyScheduleItem[] =
+        Array.isArray(b.weekly_schedule) && b.weekly_schedule.length > 0
+          ? b.weekly_schedule.map((ws: any) => ({
+              id: ws.id,
+              customerId: ws.customer_id,
+              trainerId: ws.trainer_id,
+              dayOfWeek: ws.day_of_week as WeekdayName,
+              workoutTitle: ws.workout_title,
+              isRestDay: Boolean(ws.is_rest_day),
+              focusArea: ws.focus_area || "",
+              notes: ws.notes || "",
+              exercises: Array.isArray(ws.exercises) ? ws.exercises : [],
+            }))
+          : await fetchMemberWeeklySchedule(customerId, trainerInfo.trainerId).catch(() =>
+              DEFAULT_WEEKLY_SCHEDULE(customerId, trainerInfo.trainerId)
+            );
 
       // Map meal plans
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -2647,6 +3507,7 @@ export async function fetchCustomerMyTrainerBundle(
       return {
         hasActiveTrainer: true,
         trainer: trainerInfo,
+        weeklySchedule,
         workoutPlans,
         mealPlans,
         exerciseVideos,
@@ -2661,6 +3522,7 @@ export async function fetchCustomerMyTrainerBundle(
       return {
         hasActiveTrainer: false,
         trainer: null,
+        weeklySchedule: [],
         workoutPlans: [],
         mealPlans: [],
         exerciseVideos: [],
@@ -2669,7 +3531,10 @@ export async function fetchCustomerMyTrainerBundle(
       };
     }
 
-    const [workoutPlans, mealPlans, videos, progressRecords] = await Promise.all([
+    const [weeklySchedule, workoutPlans, mealPlans, videos, progressRecords] = await Promise.all([
+      fetchMemberWeeklySchedule(customerId, activeTrainer.trainerId).catch(() =>
+        DEFAULT_WEEKLY_SCHEDULE(customerId, activeTrainer.trainerId)
+      ),
       fetchMemberWorkoutPlans(customerId).catch(() => []),
       fetchMemberMealPlans(customerId).catch(() => []),
       fetchTrainerExerciseVideos(activeTrainer.trainerId).catch(() => []),
@@ -2679,6 +3544,7 @@ export async function fetchCustomerMyTrainerBundle(
     return {
       hasActiveTrainer: true,
       trainer: activeTrainer,
+      weeklySchedule,
       workoutPlans,
       mealPlans,
       exerciseVideos: videos,

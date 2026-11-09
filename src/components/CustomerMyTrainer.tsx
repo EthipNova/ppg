@@ -22,9 +22,13 @@ import {
   getExerciseVideoSignedUrl,
   fetchInAppNotifications,
   markNotificationAsRead,
+  getGymTodayWeekday,
+  WEEKDAY_NAMES,
   type InAppNotification,
   type CustomerActiveTrainerInfo,
   type CustomerMyTrainerBundle,
+  type ExerciseSetRecord,
+  type MemberWeeklyScheduleItem,
 } from "../services/personalTrainerService";
 import { toast } from "sonner";
 
@@ -130,10 +134,16 @@ export default function CustomerMyTrainer({
   }
 
   const workoutPlans = bundle?.workoutPlans || [];
+  const weeklySchedule: MemberWeeklyScheduleItem[] = bundle?.weeklySchedule || [];
   const mealPlans = bundle?.mealPlans || [];
   const exerciseVideos = bundle?.exerciseVideos || [];
   const progressRecords = bundle?.progressRecords || [];
   const coachingNotes = bundle?.coachingNotes || [];
+
+  const todayWeekday = getGymTodayWeekday();
+  const todayScheduleItem = weeklySchedule.find(
+    (s) => s.dayOfWeek.toLowerCase() === todayWeekday.toLowerCase()
+  );
 
   const latestProgress = progressRecords.length > 0 ? progressRecords[0] : null;
 
@@ -263,13 +273,21 @@ export default function CustomerMyTrainer({
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4">
               <span className="text-[11px] font-bold uppercase tracking-wider text-zinc-500 block mb-1">
-                Active Workout Plan
+                Today's Workout
               </span>
-              <span className="text-lg font-black text-white">
-                {workoutPlans[0]?.title || "Awaiting Routine"}
+              <span className="text-lg font-black text-white truncate block">
+                {todayScheduleItem
+                  ? todayScheduleItem.workoutTitle
+                  : workoutPlans[0]?.title || "Awaiting Routine"}
               </span>
-              <span className="text-xs text-lime-400 block mt-1">
-                {workoutPlans[0]?.exercises?.length || 0} exercises assigned
+              <span className="text-xs text-lime-400 block mt-1 truncate">
+                {todayScheduleItem?.isRestDay
+                  ? "Rest & Recovery Day"
+                  : todayScheduleItem?.focusArea
+                  ? todayScheduleItem.focusArea
+                  : todayScheduleItem
+                  ? `${todayScheduleItem.exercises?.length || 0} exercises`
+                  : `${workoutPlans[0]?.exercises?.length || 0} exercises assigned`}
               </span>
             </div>
 
@@ -382,38 +400,41 @@ export default function CustomerMyTrainer({
         </div>
       )}
 
-      {/* SECTION: WORKOUT PLANS (DIGITAL WORKOUT LOG) */}
+      {/* SECTION: WORKOUT PLANS & WEEKLY ROUTINE */}
       {activeSection === "workouts" && (
         <div className="space-y-6">
-          <div className="flex items-center justify-between">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
             <div>
-              <h3 className="text-lg font-bold text-white uppercase tracking-wider">
-                Assigned Workout Routines
+              <h3 className="text-lg font-bold text-white uppercase tracking-wider flex items-center gap-2">
+                <Barbell weight="fill" className="w-5 h-5 text-lime-400" />
+                <span>Assigned Workout Routine & Logs</span>
               </h3>
               <p className="text-xs text-zinc-400">
-                Digital workout log prescribed by your coach: Planned vs Actual reps and weights.
+                Your customized weekly routine and tracked session performance with multi-set targets.
               </p>
             </div>
-            <span className="text-xs font-bold text-lime-400 bg-lime-400/10 border border-lime-400/20 px-3 py-1 rounded-full">
+            <span className="self-start sm:self-auto text-xs font-bold text-lime-400 bg-lime-400/10 border border-lime-400/20 px-3 py-1 rounded-full">
               {workoutPlans.length} {workoutPlans.length === 1 ? "Session Log" : "Session Logs"}
             </span>
           </div>
 
           {/* In-app Notification Alert Banner */}
-          {notifications.some(n => !n.isRead && n.type === "WORKOUT_PUBLISHED") && (
+          {notifications.some((n) => !n.isRead && n.type === "WORKOUT_PUBLISHED") && (
             <div className="p-4 rounded-2xl bg-lime-400/10 border border-lime-400/30 flex items-center justify-between gap-3 text-xs text-lime-300">
               <div className="flex items-center gap-2.5">
                 <Sparkle weight="fill" className="w-5 h-5 text-lime-400 shrink-0" />
                 <span className="font-medium">
-                  {notifications.find(n => !n.isRead && n.type === "WORKOUT_PUBLISHED")?.message ||
+                  {notifications.find((n) => !n.isRead && n.type === "WORKOUT_PUBLISHED")?.message ||
                     "Your coach published a new workout routine!"}
                 </span>
               </div>
               <button
                 onClick={async () => {
-                  const unread = notifications.filter(n => !n.isRead && n.type === "WORKOUT_PUBLISHED");
+                  const unread = notifications.filter(
+                    (n) => !n.isRead && n.type === "WORKOUT_PUBLISHED"
+                  );
                   for (const u of unread) await markNotificationAsRead(u.id);
-                  setNotifications(prev => prev.map(n => ({ ...n, isRead: true })));
+                  setNotifications((prev) => prev.map((n) => ({ ...n, isRead: true })));
                   toast.success("Notification dismissed.");
                 }}
                 className="px-3 py-1.5 bg-lime-400 text-zinc-950 font-bold rounded-xl text-xs shrink-0 hover:bg-lime-300 transition-colors shadow-sm"
@@ -423,165 +444,300 @@ export default function CustomerMyTrainer({
             </div>
           )}
 
-          {workoutPlans.length === 0 ? (
-            <div className="bg-zinc-900 border border-zinc-800 rounded-3xl p-10 text-center">
-              <Barbell weight="duotone" className="w-12 h-12 text-zinc-600 mx-auto mb-3" />
-              <h4 className="text-base font-bold text-white mb-1">No Workout Plans Yet</h4>
-              <p className="text-xs text-zinc-400 max-w-md mx-auto">
-                Your trainer has not published a customized workout plan yet. Once your trainer creates your workout schedule, it will immediately appear here.
-              </p>
+          {/* WEEKLY ROUTINE SCHEDULE CARDS */}
+          <div className="bg-zinc-900 border border-zinc-800 rounded-3xl p-5 sm:p-6 space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-zinc-800 pb-3">
+              <div className="flex items-center gap-2">
+                <Calendar weight="fill" className="w-4 h-4 text-lime-400" />
+                <h4 className="text-sm font-bold text-white uppercase tracking-wider">
+                  Weekly Training Routine (Mon – Sun)
+                </h4>
+              </div>
+              <div className="text-xs text-zinc-400">
+                Today is <span className="font-bold text-lime-400">{todayWeekday}</span>
+              </div>
             </div>
-          ) : (
-            <div className="space-y-6">
-              {workoutPlans.map((plan) => {
-                const workoutDateStr = plan.workoutDate || plan.startDate || plan.createdAt;
-                const formattedDate = new Date(workoutDateStr).toLocaleDateString("en-US", {
-                  month: "short",
-                  day: "numeric",
-                  year: "numeric",
-                });
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-7 gap-3">
+              {WEEKDAY_NAMES.map((day) => {
+                const item = weeklySchedule.find(
+                  (s) => s.dayOfWeek.toLowerCase() === day.toLowerCase()
+                );
+                const isToday = day.toLowerCase() === todayWeekday.toLowerCase();
+                const isRest = item ? item.isRestDay : day === "Sunday";
+                const workoutTitle = item?.workoutTitle || (isRest ? "Rest Day" : "Training");
+                const focusArea = item?.focusArea || "";
+                const exerciseCount = item?.exercises?.length || 0;
 
                 return (
                   <div
-                    key={plan.id}
-                    className="bg-zinc-900 border border-zinc-800 rounded-3xl p-5 sm:p-6 shadow-xl space-y-4"
+                    key={day}
+                    className={`p-3.5 rounded-2xl border transition-all flex flex-col justify-between ${
+                      isToday
+                        ? "bg-lime-400/10 border-lime-400/60 shadow-lg shadow-lime-400/5 ring-1 ring-lime-400/30"
+                        : isRest
+                        ? "bg-zinc-950/40 border-zinc-800/60 text-zinc-400"
+                        : "bg-zinc-950/80 border-zinc-800 text-white"
+                    }`}
                   >
-                    {/* Header */}
-                    <div className="flex flex-col md:flex-row md:items-center justify-between gap-2 border-b border-zinc-800 pb-4">
-                      <div>
-                        <div className="flex flex-wrap items-center gap-2 mb-1">
-                          <h4 className="text-xl font-black text-white uppercase tracking-tight">
-                            {plan.title}
-                          </h4>
-                          <span
-                            className={`px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase ${
-                              plan.status === "COMPLETED"
-                                ? "bg-emerald-400/20 text-emerald-400 border border-emerald-400/30"
-                                : plan.status === "IN_PROGRESS"
-                                ? "bg-blue-400/20 text-blue-300 border border-blue-400/30"
-                                : "bg-lime-400 text-zinc-950 font-bold"
-                            }`}
-                          >
-                            {plan.status === "COMPLETED"
-                              ? "Completed"
-                              : plan.status === "IN_PROGRESS"
-                              ? "In Progress"
-                              : "Published"}
+                    <div>
+                      <div className="flex items-center justify-between gap-1 mb-1.5">
+                        <span
+                          className={`text-[11px] font-black uppercase tracking-wider ${
+                            isToday ? "text-lime-400" : "text-zinc-400"
+                          }`}
+                        >
+                          {day.slice(0, 3)}
+                        </span>
+                        {isToday && (
+                          <span className="px-1.5 py-0.5 rounded text-[9px] font-black uppercase bg-lime-400 text-zinc-950 shadow-sm animate-pulse">
+                            Today
                           </span>
-                          <span
-                            className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                              plan.isCompleted
-                                ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/30"
-                                : "bg-zinc-800 text-zinc-400 border border-zinc-700/60"
-                            }`}
-                          >
-                            Complete Workout: {plan.isCompleted ? "Yes" : "No"}
+                        )}
+                        {isRest && !isToday && (
+                          <span className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase bg-zinc-800 text-zinc-400">
+                            Rest
                           </span>
-                        </div>
-                        {plan.description && (
-                          <p className="text-xs text-zinc-400 mt-1">{plan.description}</p>
                         )}
                       </div>
 
-                      <div className="text-left md:text-right text-xs text-zinc-400">
-                        <span>
-                          Session Date: <strong className="text-white font-mono">{formattedDate}</strong>
-                        </span>
+                      <div className="font-bold text-xs text-white line-clamp-1 mb-1">
+                        {workoutTitle}
                       </div>
+
+                      {focusArea && (
+                        <div className="text-[10px] text-zinc-400 line-clamp-1 mb-1">
+                          {focusArea}
+                        </div>
+                      )}
                     </div>
 
-                    {/* Exercises Paper Log Table */}
-                    <div className="space-y-3">
-                      <span className="text-xs font-bold text-zinc-400 uppercase tracking-wider block">
-                        Workout Exercises & Targets ({plan.exercises.length})
-                      </span>
-
-                      {plan.exercises.length === 0 ? (
-                        <p className="text-xs text-zinc-500 italic">No specific exercises listed under this plan.</p>
+                    <div className="mt-2 pt-2 border-t border-zinc-800/60 flex items-center justify-between text-[10px]">
+                      {isRest ? (
+                        <span className="text-zinc-500 italic">Recovery</span>
                       ) : (
-                        <div className="overflow-x-auto rounded-2xl border border-zinc-800 bg-zinc-950/70">
-                          <table className="w-full text-left text-xs border-collapse">
-                            <thead>
-                              <tr className="border-b border-zinc-800 text-[10px] uppercase text-zinc-400 tracking-wider bg-zinc-900/90 font-bold">
-                                <th className="py-2.5 pl-3">Exercise</th>
-                                <th className="py-2.5 px-2">Notes / Guidance</th>
-                                <th className="py-2.5 px-2 text-center text-cyan-400">Planned Reps</th>
-                                <th className="py-2.5 px-2 text-center text-cyan-400">Planned Wt</th>
-                                <th className="py-2.5 px-2 text-center text-lime-400">Actual Reps</th>
-                                <th className="py-2.5 px-2 text-center text-lime-400">Actual Wt</th>
-                                <th className="py-2.5 pr-3 text-center">Status</th>
-                              </tr>
-                            </thead>
-                            <tbody className="divide-y divide-zinc-800/60">
-                              {plan.exercises.map((ex, idx) => (
-                                <tr key={ex.id || idx} className="hover:bg-zinc-850/40">
-                                  <td className="py-3 pl-3 font-bold text-white whitespace-nowrap">
-                                    <div className="flex items-center gap-2">
-                                      <span className="w-5 h-5 rounded-full bg-zinc-800 text-zinc-400 text-[10px] flex items-center justify-center font-black shrink-0">
-                                        {idx + 1}
-                                      </span>
-                                      <span>{ex.exerciseName || ex.exercise_name}</span>
-                                    </div>
-                                    {ex.videoUrl && (
-                                      <a
-                                        href={ex.videoUrl}
-                                        target="_blank"
-                                        rel="noopener noreferrer"
-                                        className="inline-flex items-center gap-1 text-[11px] text-lime-400 hover:underline mt-1 block"
-                                      >
-                                        <VideoCamera className="w-3 h-3" />
-                                        <span>Demo Video</span>
-                                      </a>
-                                    )}
-                                  </td>
-                                  <td className="py-3 px-2 text-xs text-zinc-300 italic max-w-xs">
-                                    {ex.notes || ex.instructions || "—"}
-                                  </td>
-                                  <td className="py-3 px-2 text-center font-mono font-bold text-zinc-200 bg-cyan-400/5">
-                                    {ex.plannedReps ?? ex.planned_reps ?? ex.reps ?? "—"}
-                                  </td>
-                                  <td className="py-3 px-2 text-center font-mono font-bold text-zinc-200 bg-cyan-400/5">
-                                    {ex.plannedWeightKg != null
-                                      ? `${ex.plannedWeightKg} kg`
-                                      : ex.planned_weight_kg != null
-                                      ? `${ex.planned_weight_kg} kg`
-                                      : "—"}
-                                  </td>
-                                  <td className="py-3 px-2 text-center font-mono font-bold text-lime-300 bg-lime-400/5">
-                                    {ex.actualReps != null
-                                      ? ex.actualReps
-                                      : ex.actual_reps != null
-                                      ? ex.actual_reps
-                                      : "—"}
-                                  </td>
-                                  <td className="py-3 px-2 text-center font-mono font-bold text-lime-300 bg-lime-400/5">
-                                    {ex.actualWeightKg != null
-                                      ? `${ex.actualWeightKg} kg`
-                                      : ex.actual_weight_kg != null
-                                      ? `${ex.actual_weight_kg} kg`
-                                      : "—"}
-                                  </td>
-                                  <td className="py-3 pr-3 text-center">
-                                    {ex.isCompleted || ex.is_completed ? (
-                                      <span className="inline-flex items-center gap-1 text-[11px] font-bold text-lime-400">
-                                        <CheckCircle weight="fill" className="w-3.5 h-3.5 text-lime-400" /> Done
-                                      </span>
-                                    ) : (
-                                      <span className="text-[11px] text-zinc-500 font-medium">Pending</span>
-                                    )}
-                                  </td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        </div>
+                        <span className="text-lime-400 font-mono">
+                          {exerciseCount > 0 ? `${exerciseCount} exercises` : "Scheduled"}
+                        </span>
                       )}
                     </div>
                   </div>
                 );
               })}
             </div>
-          )}
+          </div>
+
+          {/* RECORDED WORKOUT SESSIONS & PERFORMANCE LOGS */}
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <h4 className="text-sm font-bold text-white uppercase tracking-wider">
+                Workout Session Logs & Multi-Set Performance
+              </h4>
+              <span className="text-xs text-zinc-500">Showing latest recorded sessions</span>
+            </div>
+
+            {workoutPlans.length === 0 ? (
+              <div className="bg-zinc-900 border border-zinc-800 rounded-3xl p-8 sm:p-10 text-center">
+                <Barbell weight="duotone" className="w-12 h-12 text-zinc-600 mx-auto mb-3" />
+                <h4 className="text-base font-bold text-white mb-1">No Workout Sessions Logged Yet</h4>
+                <p className="text-xs text-zinc-400 max-w-md mx-auto">
+                  Your trainer will log your workout performance, sets, weights, and reps here during your coaching sessions. Follow your weekly routine above in the meantime!
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-6">
+                {workoutPlans.map((plan) => {
+                  const workoutDateStr = plan.workoutDate || plan.startDate || plan.createdAt;
+                  const formattedDate = new Date(workoutDateStr).toLocaleDateString("en-US", {
+                    month: "short",
+                    day: "numeric",
+                    year: "numeric",
+                  });
+
+                  return (
+                    <div
+                      key={plan.id}
+                      className="bg-zinc-900 border border-zinc-800 rounded-3xl p-5 sm:p-6 shadow-xl space-y-4"
+                    >
+                      {/* Session Header */}
+                      <div className="flex flex-col md:flex-row md:items-center justify-between gap-2 border-b border-zinc-800 pb-4">
+                        <div>
+                          <div className="flex flex-wrap items-center gap-2 mb-1">
+                            <h4 className="text-lg sm:text-xl font-black text-white uppercase tracking-tight">
+                              {plan.title}
+                            </h4>
+                            <span
+                              className={`px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase ${
+                                plan.status === "COMPLETED"
+                                  ? "bg-emerald-400/20 text-emerald-400 border border-emerald-400/30"
+                                  : "bg-lime-400 text-zinc-950 font-bold"
+                              }`}
+                            >
+                              {plan.status === "COMPLETED" ? "Completed" : "Logged Session"}
+                            </span>
+                            {plan.isCompleted && (
+                              <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                                Session Finished
+                              </span>
+                            )}
+                          </div>
+                          {plan.description && (
+                            <p className="text-xs text-zinc-400 mt-1">{plan.description}</p>
+                          )}
+                        </div>
+
+                        <div className="text-left md:text-right text-xs text-zinc-400">
+                          <span>
+                            Date: <strong className="text-white font-mono">{formattedDate}</strong>
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Exercises with Multi-Set Tables */}
+                      <div className="space-y-4">
+                        <span className="text-xs font-bold text-zinc-400 uppercase tracking-wider block">
+                          Exercises Recorded ({plan.exercises.length})
+                        </span>
+
+                        {plan.exercises.length === 0 ? (
+                          <p className="text-xs text-zinc-500 italic">No specific exercises recorded in this session.</p>
+                        ) : (
+                          <div className="space-y-4">
+                            {plan.exercises.map((ex, idx) => {
+                              const sets: ExerciseSetRecord[] =
+                                Array.isArray(ex.setsData) && ex.setsData.length > 0
+                                  ? ex.setsData
+                                  : Array.isArray(ex.sets_data) && ex.sets_data.length > 0
+                                  ? ex.sets_data
+                                  : [
+                                      {
+                                        setNumber: 1,
+                                        plannedReps: Number(
+                                          ex.plannedReps ?? ex.planned_reps ?? ex.reps ?? 10
+                                        ),
+                                        plannedWeightKg:
+                                          ex.plannedWeightKg != null
+                                            ? Number(ex.plannedWeightKg)
+                                            : ex.planned_weight_kg != null
+                                            ? Number(ex.planned_weight_kg)
+                                            : null,
+                                        actualReps:
+                                          ex.actualReps != null
+                                            ? Number(ex.actualReps)
+                                            : ex.actual_reps != null
+                                            ? Number(ex.actual_reps)
+                                            : null,
+                                        actualWeightKg:
+                                          ex.actualWeightKg != null
+                                            ? Number(ex.actualWeightKg)
+                                            : ex.actual_weight_kg != null
+                                            ? Number(ex.actual_weight_kg)
+                                            : null,
+                                        isCompleted: Boolean(ex.isCompleted ?? ex.is_completed),
+                                      },
+                                    ];
+
+                              return (
+                                <div
+                                  key={ex.id || idx}
+                                  className="rounded-2xl border border-zinc-800 bg-zinc-950/70 p-4 space-y-3"
+                                >
+                                  {/* Exercise Title & Info */}
+                                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                                    <div className="flex items-center gap-2.5">
+                                      <span className="w-6 h-6 rounded-lg bg-zinc-800 text-lime-400 text-xs flex items-center justify-center font-black shrink-0">
+                                        {idx + 1}
+                                      </span>
+                                      <h5 className="text-sm font-bold text-white">
+                                        {ex.exerciseName || ex.exercise_name}
+                                      </h5>
+                                    </div>
+                                    <div className="flex items-center gap-3">
+                                      {ex.videoUrl && (
+                                        <a
+                                          href={ex.videoUrl}
+                                          target="_blank"
+                                          rel="noopener noreferrer"
+                                          className="inline-flex items-center gap-1 text-[11px] text-lime-400 hover:underline"
+                                        >
+                                          <VideoCamera className="w-3.5 h-3.5" />
+                                          <span>Video Demo</span>
+                                        </a>
+                                      )}
+                                      <span className="text-[11px] text-zinc-400 font-mono">
+                                        {sets.length} {sets.length === 1 ? "Set" : "Sets"}
+                                      </span>
+                                    </div>
+                                  </div>
+
+                                  {(ex.notes || ex.instructions) && (
+                                    <p className="text-xs text-zinc-400 italic bg-zinc-900/60 px-3 py-1.5 rounded-lg border border-zinc-800/60">
+                                      <strong className="text-zinc-300 not-italic">Coach Note: </strong>
+                                      {ex.notes || ex.instructions}
+                                    </p>
+                                  )}
+
+                                  {/* Multi-Set Table */}
+                                  <div className="overflow-x-auto rounded-xl border border-zinc-800/80 bg-zinc-900/40">
+                                    <table className="w-full text-left text-xs border-collapse min-w-[360px]">
+                                      <thead>
+                                        <tr className="border-b border-zinc-800 text-[10px] uppercase text-zinc-400 tracking-wider bg-zinc-900/90 font-bold">
+                                          <th className="py-2 px-3 text-center w-16">Set #</th>
+                                          <th className="py-2 px-3 text-center text-cyan-400">Planned Reps</th>
+                                          <th className="py-2 px-3 text-center text-cyan-400">Planned KG</th>
+                                          <th className="py-2 px-3 text-center text-lime-400">Actual Reps</th>
+                                          <th className="py-2 px-3 text-center text-lime-400">Actual KG</th>
+                                          <th className="py-2 px-3 text-center w-24">Status</th>
+                                        </tr>
+                                      </thead>
+                                      <tbody className="divide-y divide-zinc-800/60 font-mono text-xs">
+                                        {sets.map((set, sIdx) => (
+                                          <tr key={sIdx} className="hover:bg-zinc-850/40">
+                                            <td className="py-2 px-3 text-center font-bold text-zinc-400">
+                                              Set {set.setNumber || sIdx + 1}
+                                            </td>
+                                            <td className="py-2 px-3 text-center text-zinc-200 bg-cyan-400/5">
+                                              {set.plannedReps ?? "—"}
+                                            </td>
+                                            <td className="py-2 px-3 text-center text-zinc-200 bg-cyan-400/5">
+                                              {set.plannedWeightKg != null
+                                                ? `${set.plannedWeightKg} kg`
+                                                : "Bodyweight"}
+                                            </td>
+                                            <td className="py-2 px-3 text-center text-lime-300 font-bold bg-lime-400/5">
+                                              {set.actualReps != null ? set.actualReps : "—"}
+                                            </td>
+                                            <td className="py-2 px-3 text-center text-lime-300 font-bold bg-lime-400/5">
+                                              {set.actualWeightKg != null
+                                                ? `${set.actualWeightKg} kg`
+                                                : "—"}
+                                            </td>
+                                            <td className="py-2 px-3 text-center font-sans">
+                                              {set.isCompleted ? (
+                                                <span className="inline-flex items-center gap-1 text-[11px] font-bold text-lime-400">
+                                                  <CheckCircle weight="fill" className="w-3.5 h-3.5 text-lime-400" /> Done
+                                                </span>
+                                              ) : (
+                                                <span className="text-[11px] text-zinc-500 font-medium">Pending</span>
+                                              )}
+                                            </td>
+                                          </tr>
+                                        ))}
+                                      </tbody>
+                                    </table>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
         </div>
       )}
 

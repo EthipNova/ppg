@@ -5,7 +5,7 @@ import { Users, MagnifyingGlass, CheckCircle, User, Plus, Clock, Warning, Gradua
 import { useGym, useT, formatETB, addAudit, planAppliesToCategory, categoryLabelOf } from "../context/GymContext";
 import type { CustomerCategory, Member } from "../types";
 import { toast } from "sonner";
-import { ALL_CATEGORIES } from "../constants";
+import { fetchCategories } from "../services/categories";
 import LockersManagement from "./LockersManagement";
 import SteamManagement from "./SteamManagement";
 import ContactMessagesView from "./ContactMessagesView";
@@ -22,11 +22,21 @@ import {
 import { receptionResetCustomerPassword } from "../services/customers";
 import { ChalkboardTeacher, Info, ArrowLeft, Eye } from "@phosphor-icons/react";
 
-const CATEGORY_ICONS: Record<CustomerCategory, typeof Sparkle> = { REGULAR: Sparkle, STUDENT: GraduationCap, MUSLIM: MoonStars, AEROBICS: MusicNotes };
+const CATEGORY_ICONS: Record<string, typeof Sparkle> = {
+  REGULAR: Sparkle,
+  STUDENT: GraduationCap,
+  MUSLIM: MoonStars,
+  AEROBICS: MusicNotes,
+};
 function CategoryBadge({ category }: { category: CustomerCategory }) {
   const { state } = useGym();
-  const Icon = CATEGORY_ICONS[category];
-  return <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-semibold bg-zinc-800 text-zinc-300"><Icon weight="fill" className="w-3 h-3 text-lime-400" />{categoryLabelOf(state, category)}</span>;
+  const Icon = (category ? CATEGORY_ICONS[category] : null) || Sparkle;
+  return (
+    <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-semibold bg-zinc-800 text-zinc-300">
+      <Icon weight="fill" className="w-3 h-3 text-lime-400" />
+      {categoryLabelOf(state, category)}
+    </span>
+  );
 }
 
 const TABS = ["directory", "lockers", "steam", "register", "contact_messages"] as const;
@@ -1181,9 +1191,19 @@ function RegisterView() {
     ? selectedPlan.price + (form.needsTrainer ? trainerFee : 0)
     : 0;
 
-  // Load configured trainer fee and active trainers from Supabase
+  // Load configured trainer fee, active trainers, and latest categories from Supabase
   useEffect(() => {
     let mounted = true;
+
+    // Refresh categories dynamically from Supabase
+    fetchCategories().then(cats => {
+      if (mounted && cats && cats.length > 0) {
+        dispatch({ type: "SET_CATEGORIES", payload: cats });
+      }
+    }).catch(err => {
+      console.warn("Unable to load latest customer categories:", err);
+    });
+
     async function loadTrainerConfig() {
       try {
         setLoadingTrainers(true);
@@ -1378,11 +1398,13 @@ function RegisterView() {
             data-testid="staff-category-select"
             className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-lime-400/50"
           >
-            {ALL_CATEGORIES.map(c => (
-              <option key={c} value={c}>
-                {categoryLabelOf(state, c)}
-              </option>
-            ))}
+            {state.categoryLabels
+              .filter(c => c.isActive !== false)
+              .map(c => (
+                <option key={c.category} value={c.category}>
+                  {c.label}
+                </option>
+              ))}
           </select>
         </div>
 

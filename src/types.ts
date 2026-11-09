@@ -275,6 +275,43 @@ export type LockerSection = "Men" | "Women" | "VIP" | "General";
 /** Statut d'une attribution de casier. */
 export type LockerAssignmentStatus = "active" | "returned" | "lost" | "ACTIVE" | "RETURNED" | "CANCELLED";
 
+/** Weekly workout routines and multi-set tracking types */
+export type WeekdayName = "Monday" | "Tuesday" | "Wednesday" | "Thursday" | "Friday" | "Saturday" | "Sunday";
+
+export interface ExerciseSetRecord {
+  setNumber: number;
+  plannedReps: number;
+  plannedWeightKg: number | null;
+  actualReps: number | null;
+  actualWeightKg: number | null;
+  isCompleted?: boolean;
+}
+
+export interface ScheduledExerciseTemplate {
+  exerciseName: string;
+  notes?: string;
+  sets: Array<{
+    setNumber: number;
+    plannedReps: number;
+    plannedWeightKg: number | null;
+  }>;
+}
+
+export interface MemberWeeklyScheduleItem {
+  id?: string;
+  customerId: string;
+  trainerId?: string | null;
+  dayOfWeek: WeekdayName;
+  workoutTitle: string;
+  isRestDay: boolean;
+  focusArea?: string;
+  notes?: string;
+  exercises: ScheduledExerciseTemplate[];
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+
 /** Casier de la salle (section, numéro et porte-clés). */
 export interface Locker {
   id: string;

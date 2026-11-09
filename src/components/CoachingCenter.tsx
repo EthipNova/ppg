@@ -18,6 +18,10 @@ import {
   UploadSimple,
   Sparkle,
   CheckCircle,
+  Calendar,
+  Gear,
+  Clock,
+  Lightning,
 } from "@phosphor-icons/react";
 import { toast } from "sonner";
 import {
@@ -44,6 +48,13 @@ import {
   fetchTrainerMemberProgress,
   recordMemberProgress,
   deleteMemberProgressRecord,
+  getGymTodayDate,
+  getGymTodayWeekday,
+  fetchMemberWeeklySchedule,
+  saveMemberWeeklySchedule,
+  fetchTodayAssignedWorkout,
+  fetchMemberWorkoutHistoryForComparison,
+  DEFAULT_WEEKLY_SCHEDULE,
   type AssignedMemberItem,
   type WorkoutPlanWithExercises,
   type MealPlanWithItems,
@@ -51,8 +62,15 @@ import {
   type MemberProgressRecord,
   type MemberAttendanceCombinedItem,
   type PersonalTrainingSessionItem,
+  type WorkoutPlan,
 } from "../services/personalTrainerService";
 import type { RealTrainerProfile } from "../services/trainerProfileService";
+import type {
+  ExerciseSetRecord,
+  MemberWeeklyScheduleItem,
+  WeekdayName,
+  ScheduledExerciseTemplate,
+} from "../types";
 
 const CARD = "bg-zinc-900 border border-zinc-800 rounded-2xl p-5";
 const INPUT =
@@ -161,6 +179,8 @@ export default function CoachingCenter({
   // Modals
   const [showVideoUploadModal, setShowVideoUploadModal] = useState(false);
   const [showWorkoutModal, setShowWorkoutModal] = useState(false);
+  const [showWeeklyScheduleModal, setShowWeeklyScheduleModal] = useState(false);
+  const [memberWeeklySchedule, setMemberWeeklySchedule] = useState<MemberWeeklyScheduleItem[]>([]);
   const [editingWorkoutPlan, setEditingWorkoutPlan] = useState<WorkoutPlanWithExercises | null>(null);
   const [showMealModal, setShowMealModal] = useState(false);
   const [editingMealPlan, setEditingMealPlan] = useState<MealPlanWithItems | null>(null);
@@ -197,16 +217,18 @@ export default function CoachingCenter({
 
       if (scope === "individual" && selectedMemberId) {
         // Individual member focus
-        const [w, m, att, prog] = await Promise.all([
+        const [w, m, att, prog, sched] = await Promise.all([
           fetchMemberWorkoutPlans(selectedMemberId).catch(() => []),
           fetchMemberMealPlans(selectedMemberId).catch(() => []),
           fetchMemberAttendanceHistory(selectedMemberId).catch(() => []),
           fetchMemberProgressRecords(selectedMemberId).catch(() => []),
+          fetchMemberWeeklySchedule(selectedMemberId, effectiveTrainerId).catch(() => []),
         ]);
         setWorkoutPlans(w);
         setMealPlans(m);
         setAttendance(att);
         setProgressRecords(prog);
+        setMemberWeeklySchedule(sched);
       } else {
         // All members focus
         const [w, m, ptSessions, prog] = await Promise.all([
@@ -730,38 +752,123 @@ export default function CoachingCenter({
             </div>
           )}
 
-          {/* SECTION 2: WORKOUT PLANS (DIGITAL WORKOUT LOG) */}
+          {/* SECTION 2: WORKOUT PLANS & WEEKLY SCHEDULE */}
           {section === "workouts" && (
             <div className="space-y-4">
-              <div className={`${CARD} flex flex-col sm:flex-row sm:items-center justify-between gap-3`}>
+              {/* Header with Routine Config & Record Actions */}
+              <div className={`${CARD} flex flex-col md:flex-row md:items-center justify-between gap-4`}>
                 <div>
                   <h3 className="text-base font-bold text-white flex items-center gap-2">
                     <Barbell weight="fill" className="w-5 h-5 text-lime-400" />
-                    Digital Workout Logs
+                    Personal Trainer Workout Management
                   </h3>
-                  <p className="text-xs text-zinc-400">
-                    Replicate gym paper log: Date, Exercise, Notes, Planned vs Actual Reps & Weight, Complete Workout Yes/No.
+                  <p className="text-xs text-zinc-400 mt-0.5">
+                    Configure member-specific weekly schedules (Mon–Sun) & record session performance with Excel-like historical comparison.
                   </p>
                 </div>
 
-                <button
-                  onClick={() => {
-                    setEditingWorkoutPlan(null);
-                    setShowWorkoutModal(true);
-                  }}
-                  className="bg-lime-400 hover:bg-lime-300 text-zinc-950 font-bold px-3.5 py-2 rounded-xl text-xs flex items-center gap-1.5 transition-colors self-start sm:self-auto shadow-sm shadow-lime-400/20"
-                >
-                  <Plus weight="bold" className="w-3.5 h-3.5" />
-                  Create Workout Log
-                </button>
+                <div className="flex flex-wrap items-center gap-2 self-start md:self-auto">
+                  <button
+                    type="button"
+                    onClick={() => setShowWeeklyScheduleModal(true)}
+                    className="bg-zinc-800 hover:bg-zinc-750 text-zinc-200 border border-zinc-700 font-bold px-3.5 py-2 rounded-xl text-xs flex items-center gap-1.5 transition-colors shadow-sm"
+                  >
+                    <Calendar weight="bold" className="w-3.5 h-3.5 text-lime-400" />
+                    Weekly Routine Setup
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setEditingWorkoutPlan(null);
+                      setShowWorkoutModal(true);
+                    }}
+                    className="bg-lime-400 hover:bg-lime-300 text-zinc-950 font-bold px-4 py-2 rounded-xl text-xs flex items-center gap-1.5 transition-colors shadow-sm shadow-lime-400/20"
+                  >
+                    <Plus weight="bold" className="w-3.5 h-3.5" />
+                    Log Today&apos;s Workout
+                  </button>
+                </div>
               </div>
 
+              {/* Weekly Routine Snapshot Card (When a member is selected or in individual scope) */}
+              {selectedMemberId && (
+                <div className="bg-zinc-950/70 border border-zinc-800 rounded-2xl p-4 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-1.5">
+                        <Calendar weight="fill" className="w-3.5 h-3.5 text-lime-400" />
+                        Weekly Routine: {currentMember?.customer_name || "Member"}
+                      </span>
+                      <span className="text-[10px] text-zinc-500 font-mono">
+                        (Today: {getGymTodayWeekday()})
+                      </span>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => setShowWeeklyScheduleModal(true)}
+                      className="text-xs text-lime-400 hover:underline font-bold"
+                    >
+                      Edit Routine →
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-7 gap-2">
+                    {[
+                      "Monday",
+                      "Tuesday",
+                      "Wednesday",
+                      "Thursday",
+                      "Friday",
+                      "Saturday",
+                      "Sunday",
+                    ].map(day => {
+                      const item = memberWeeklySchedule.find(s => s.dayOfWeek === day);
+                      const isToday = getGymTodayWeekday() === day;
+                      const isRest = Boolean(item?.isRestDay);
+
+                      return (
+                        <div
+                          key={day}
+                          className={`p-2.5 rounded-xl border text-center transition-all ${
+                            isToday
+                              ? "bg-lime-400/10 border-lime-400/40 text-lime-300 ring-1 ring-lime-400/20 shadow-sm"
+                              : "bg-zinc-900 border-zinc-800 text-zinc-300"
+                          }`}
+                        >
+                          <div className="flex items-center justify-between text-[10px] font-mono font-bold mb-1">
+                            <span className={isToday ? "text-lime-400" : "text-zinc-500"}>
+                              {day.slice(0, 3).toUpperCase()}
+                            </span>
+                            {isToday && (
+                              <span className="px-1 py-0.2 bg-lime-400 text-zinc-950 font-black rounded text-[9px]">
+                                TODAY
+                              </span>
+                            )}
+                          </div>
+                          <p className={`text-xs font-bold truncate ${isRest ? "text-zinc-500" : "text-white"}`}>
+                            {isRest ? "Rest Day" : item?.workoutTitle || "Push Day"}
+                          </p>
+                          {item?.focusArea && !isRest && (
+                            <p className="text-[10px] text-zinc-500 truncate mt-0.5">
+                              {item.focusArea}
+                            </p>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* Workout Session History Logs */}
               {workoutPlans.length === 0 ? (
                 <div className={`${CARD} py-14 text-center text-zinc-500`}>
                   <Barbell className="w-12 h-12 mx-auto text-zinc-700 mb-2" />
-                  <p className="text-sm font-semibold text-zinc-400">No workout logs recorded yet</p>
+                  <p className="text-sm font-semibold text-zinc-400">No workout session logs recorded yet</p>
                   <p className="text-xs text-zinc-500 mt-1">
-                    Click &quot;Create Workout Log&quot; to draft or publish digital session logs for your members.
+                    Click &quot;Log Today&apos;s Workout&quot; to log exercises and sets for your members.
                   </p>
                 </div>
               ) : (
@@ -785,26 +892,10 @@ export default function CoachingCenter({
                             <div className="flex flex-wrap items-center gap-2 mb-1">
                               <h4 className="font-bold text-white text-base">{plan.title}</h4>
 
-                              {/* Status Badges */}
-                              {plan.status === "DRAFT" ? (
-                                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-amber-400/15 text-amber-300 border border-amber-400/30">
-                                  Draft (Hidden from Member)
-                                </span>
-                              ) : plan.status === "PUBLISHED" || plan.status === "ACTIVE" ? (
-                                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-lime-400/20 text-lime-400 border border-lime-400/30">
-                                  Published
-                                </span>
-                              ) : plan.status === "IN_PROGRESS" ? (
-                                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-blue-400/20 text-blue-300 border border-blue-400/30">
-                                  In Progress
-                                </span>
-                              ) : (
-                                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-emerald-400/20 text-emerald-300 border border-emerald-400/30">
-                                  Completed
-                                </span>
-                              )}
+                              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-lime-400/20 text-lime-400 border border-lime-400/30">
+                                Saved & Active
+                              </span>
 
-                              {/* Complete Workout? Yes/No Badge */}
                               <span
                                 className={`px-2 py-0.5 rounded-md text-[10px] font-bold ${
                                   plan.isCompleted
@@ -825,6 +916,9 @@ export default function CoachingCenter({
                                   Member: <strong>{plan.customerName}</strong> {plan.customerCode ? `(${plan.customerCode})` : ""}
                                 </span>
                               )}
+                              <span className="text-zinc-400">
+                                {plan.exercises.length} exercise{plan.exercises.length === 1 ? "" : "s"}
+                              </span>
                             </div>
                             {plan.description && (
                               <p className="text-xs text-zinc-400 mt-1">{plan.description}</p>
@@ -833,24 +927,15 @@ export default function CoachingCenter({
 
                           {/* Quick Actions */}
                           <div className="flex items-center gap-2 self-start sm:self-auto">
-                            {plan.status === "DRAFT" && (
-                              <button
-                                onClick={() => handlePublishWorkout(plan)}
-                                className="px-3 py-1.5 bg-lime-400 hover:bg-lime-300 text-zinc-950 font-bold rounded-xl text-xs transition-colors shadow-sm"
-                                title="Publish to member and send alert"
-                              >
-                                Publish Workout
-                              </button>
-                            )}
                             <button
                               onClick={() => {
                                 setEditingWorkoutPlan(plan);
                                 setShowWorkoutModal(true);
                               }}
                               className="px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 font-semibold rounded-xl text-xs flex items-center gap-1.5 transition-colors border border-zinc-700"
-                              title="Edit Log / Record Actuals"
+                              title="Edit Workout / Log Actuals"
                             >
-                              <PencilSimple weight="bold" className="w-3.5 h-3.5" />
+                              <PencilSimple weight="bold" className="w-3.5 h-3.5 text-lime-400" />
                               <span>Edit / Log</span>
                             </button>
                             <button
@@ -863,60 +948,85 @@ export default function CoachingCenter({
                           </div>
                         </div>
 
-                        {/* Digital Gym Paper Log Table */}
+                        {/* Multi-Set Table */}
                         <div className="overflow-x-auto rounded-xl border border-zinc-800/80 bg-zinc-950/60">
                           <table className="w-full text-left text-xs border-collapse">
                             <thead>
                               <tr className="border-b border-zinc-800 text-[10px] uppercase text-zinc-400 tracking-wider bg-zinc-900/80 font-bold">
                                 <th className="py-2.5 pl-3">Exercise</th>
-                                <th className="py-2.5 px-2">Notes</th>
+                                <th className="py-2.5 px-2 text-center w-14">Set</th>
                                 <th className="py-2.5 px-2 text-center text-cyan-400">Planned Reps</th>
-                                <th className="py-2.5 px-2 text-center text-cyan-400">Planned Wt (KG)</th>
+                                <th className="py-2.5 px-2 text-center text-cyan-400">Planned (KG)</th>
                                 <th className="py-2.5 px-2 text-center text-lime-400">Actual Reps</th>
-                                <th className="py-2.5 px-2 text-center text-lime-400">Actual Wt (KG)</th>
+                                <th className="py-2.5 px-2 text-center text-lime-400">Actual (KG)</th>
                                 <th className="py-2.5 pr-3 text-center">Done?</th>
                               </tr>
                             </thead>
                             <tbody className="divide-y divide-zinc-800/50">
-                              {plan.exercises.map((ex, i) => (
-                                <tr key={ex.id || i} className="hover:bg-zinc-850/40">
-                                  <td className="py-2.5 pl-3 font-bold text-white whitespace-nowrap">
-                                    {ex.exerciseName || ex.exercise_name}
-                                  </td>
-                                  <td className="py-2.5 px-2 text-zinc-400 text-xs italic max-w-xs truncate">
-                                    {ex.notes || ex.instructions || "—"}
-                                  </td>
-                                  <td className="py-2.5 px-2 text-center font-mono font-bold text-zinc-200 bg-cyan-400/5">
-                                    {ex.plannedReps ?? ex.planned_reps ?? ex.reps ?? "—"}
-                                  </td>
-                                  <td className="py-2.5 px-2 text-center font-mono font-bold text-zinc-200 bg-cyan-400/5">
-                                    {ex.plannedWeightKg != null
-                                      ? `${ex.plannedWeightKg} kg`
-                                      : ex.planned_weight_kg != null
-                                      ? `${ex.planned_weight_kg} kg`
-                                      : "—"}
-                                  </td>
-                                  <td className="py-2.5 px-2 text-center font-mono font-bold text-lime-300 bg-lime-400/5">
-                                    {ex.actualReps != null ? ex.actualReps : ex.actual_reps != null ? ex.actual_reps : "—"}
-                                  </td>
-                                  <td className="py-2.5 px-2 text-center font-mono font-bold text-lime-300 bg-lime-400/5">
-                                    {ex.actualWeightKg != null
-                                      ? `${ex.actualWeightKg} kg`
-                                      : ex.actual_weight_kg != null
-                                      ? `${ex.actual_weight_kg} kg`
-                                      : "—"}
-                                  </td>
-                                  <td className="py-2.5 pr-3 text-center">
-                                    {ex.isCompleted || ex.is_completed ? (
-                                      <span className="inline-flex items-center gap-1 text-[11px] font-bold text-lime-400">
-                                        <CheckCircle weight="fill" className="w-3.5 h-3.5 text-lime-400" /> Yes
-                                      </span>
-                                    ) : (
-                                      <span className="text-[11px] text-zinc-500 font-medium">No</span>
-                                    )}
-                                  </td>
-                                </tr>
-                              ))}
+                              {plan.exercises.flatMap((ex, exIdx) => {
+                                const sets =
+                                  Array.isArray(ex.setsData) && ex.setsData.length > 0
+                                    ? ex.setsData
+                                    : [
+                                        {
+                                          setNumber: 1,
+                                          plannedReps: ex.plannedReps ?? ex.planned_reps ?? ex.reps ?? 10,
+                                          plannedWeightKg: ex.plannedWeightKg ?? ex.planned_weight_kg ?? null,
+                                          actualReps: ex.actualReps ?? ex.actual_reps ?? null,
+                                          actualWeightKg: ex.actualWeightKg ?? ex.actual_weight_kg ?? null,
+                                          isCompleted: ex.isCompleted ?? ex.is_completed ?? false,
+                                        },
+                                      ];
+
+                                return sets.map((s, sIdx) => (
+                                  <tr
+                                    key={`${ex.id || exIdx}-s${s.setNumber || sIdx}`}
+                                    className="hover:bg-zinc-850/40"
+                                  >
+                                    {sIdx === 0 ? (
+                                      <td
+                                        rowSpan={sets.length}
+                                        className="py-2.5 pl-3 font-bold text-white align-top border-r border-zinc-800/60"
+                                      >
+                                        <div>{ex.exerciseName || ex.exercise_name}</div>
+                                        {ex.notes && (
+                                          <div className="text-[11px] text-zinc-400 font-normal italic mt-0.5">
+                                            {ex.notes}
+                                          </div>
+                                        )}
+                                      </td>
+                                    ) : null}
+
+                                    <td className="py-2 px-2 text-center font-mono font-bold text-lime-400">
+                                      Set {s.setNumber || sIdx + 1}
+                                    </td>
+
+                                    <td className="py-2 px-2 text-center font-mono font-bold text-zinc-200 bg-cyan-400/5">
+                                      {s.plannedReps ?? "—"}
+                                    </td>
+                                    <td className="py-2 px-2 text-center font-mono font-bold text-zinc-200 bg-cyan-400/5">
+                                      {s.plannedWeightKg != null ? `${s.plannedWeightKg} kg` : "—"}
+                                    </td>
+
+                                    <td className="py-2 px-2 text-center font-mono font-bold text-lime-300 bg-lime-400/5">
+                                      {s.actualReps != null ? s.actualReps : "—"}
+                                    </td>
+                                    <td className="py-2 px-2 text-center font-mono font-bold text-lime-300 bg-lime-400/5">
+                                      {s.actualWeightKg != null ? `${s.actualWeightKg} kg` : "—"}
+                                    </td>
+
+                                    <td className="py-2 pr-3 text-center">
+                                      {s.isCompleted ? (
+                                        <span className="inline-flex items-center gap-1 text-[11px] font-bold text-lime-400">
+                                          <CheckCircle weight="fill" className="w-3.5 h-3.5 text-lime-400" /> Yes
+                                        </span>
+                                      ) : (
+                                        <span className="text-[11px] text-zinc-500 font-medium">No</span>
+                                      )}
+                                    </td>
+                                  </tr>
+                                ));
+                              })}
                             </tbody>
                           </table>
                         </div>
@@ -1315,14 +1425,13 @@ export default function CoachingCenter({
         />
       )}
 
-      {/* Create / Edit Workout Plan Modal */}
+      {/* Log Workout Session Modal */}
       {showWorkoutModal && (
-        <WorkoutPlanModal
+        <WorkoutSessionRecordingModal
           trainerId={effectiveTrainerId || ""}
           assignedMembers={assignedMembers}
           initialCustomerId={scope === "individual" ? selectedMemberId : null}
-          initialScope={scope}
-          planToEdit={editingWorkoutPlan}
+          sessionToEdit={editingWorkoutPlan}
           onClose={() => {
             setShowWorkoutModal(false);
             setEditingWorkoutPlan(null);
@@ -1330,6 +1439,20 @@ export default function CoachingCenter({
           onSaved={async () => {
             setShowWorkoutModal(false);
             setEditingWorkoutPlan(null);
+            await loadCoachingData();
+          }}
+        />
+      )}
+
+      {/* Member Weekly Workout Schedule Setup Modal */}
+      {showWeeklyScheduleModal && (
+        <MemberWeeklyScheduleModal
+          trainerId={effectiveTrainerId || ""}
+          assignedMembers={assignedMembers}
+          initialCustomerId={scope === "individual" ? selectedMemberId : null}
+          onClose={() => setShowWeeklyScheduleModal(false)}
+          onSaved={async () => {
+            setShowWeeklyScheduleModal(false);
             await loadCoachingData();
           }}
         />
@@ -1600,229 +1723,259 @@ function VideoUploadModal({
 }
 
 // ==============================================================================
-// 2. DIGITAL WORKOUT LOG MODAL (Replicating Gym Paper Log)
+// 2A. MEMBER WEEKLY WORKOUT SCHEDULE MODAL
 // ==============================================================================
-interface WorkoutLogEntryState {
-  id?: string;
-  exerciseName: string;
-  notes: string;
-  plannedReps: number;
-  plannedWeightKg: number | string;
-  actualReps: number | string;
-  actualWeightKg: number | string;
-  isCompleted: boolean;
-}
-
-function WorkoutPlanModal({
+function MemberWeeklyScheduleModal({
   trainerId,
   assignedMembers,
   initialCustomerId,
-  initialScope,
-  planToEdit,
   onClose,
   onSaved,
 }: {
   trainerId: string;
   assignedMembers: AssignedMemberItem[];
   initialCustomerId: string | null;
-  initialScope: "individual" | "all";
-  planToEdit: WorkoutPlanWithExercises | null;
   onClose: () => void;
   onSaved: () => void;
 }) {
-  const [title, setTitle] = useState(planToEdit?.title || "Workout Session");
-  const [workoutDate, setWorkoutDate] = useState<string>(
-    planToEdit?.workoutDate || planToEdit?.startDate || new Date().toISOString().split("T")[0]
-  );
-  const [isCompleted, setIsCompleted] = useState<boolean>(Boolean(planToEdit?.isCompleted));
-  const [targetScope, setTargetScope] = useState<"individual" | "all">(
-    planToEdit ? "individual" : initialScope
-  );
   const [targetCustomerId, setTargetCustomerId] = useState<string>(
-    planToEdit?.customerId || initialCustomerId || (assignedMembers.length > 0 ? assignedMembers[0].customer_id : "")
+    initialCustomerId || (assignedMembers.length > 0 ? assignedMembers[0].customer_id : "")
   );
+  const [schedule, setSchedule] = useState<MemberWeeklyScheduleItem[]>([]);
+  const [activeDay, setActiveDay] = useState<WeekdayName>("Monday");
+  const [loading, setLoading] = useState<boolean>(true);
+  const [saving, setSaving] = useState<boolean>(false);
 
-  const [entries, setEntries] = useState<WorkoutLogEntryState[]>(
-    planToEdit?.exercises && planToEdit.exercises.length > 0
-      ? planToEdit.exercises.map(e => ({
-          id: e.id,
-          exerciseName: e.exerciseName || e.exercise_name || "",
-          notes: e.notes || e.instructions || "",
-          plannedReps: Number(e.plannedReps ?? e.planned_reps ?? e.reps ?? 10),
-          plannedWeightKg:
-            e.plannedWeightKg != null
-              ? e.plannedWeightKg
-              : e.planned_weight_kg != null
-              ? e.planned_weight_kg
-              : "",
-          actualReps:
-            e.actualReps != null ? e.actualReps : e.actual_reps != null ? e.actual_reps : "",
-          actualWeightKg:
-            e.actualWeightKg != null
-              ? e.actualWeightKg
-              : e.actual_weight_kg != null
-              ? e.actual_weight_kg
-              : "",
-          isCompleted: Boolean(e.isCompleted ?? e.is_completed),
-        }))
-      : [
-          {
-            exerciseName: "Barbell Bench Press",
-            notes: "Warm up 2 sets, pause at bottom",
-            plannedReps: 10,
-            plannedWeightKg: 60,
-            actualReps: "",
-            actualWeightKg: "",
-            isCompleted: false,
-          },
-          {
-            exerciseName: "Incline Dumbbell Press",
-            notes: "Focus on upper chest contraction",
-            plannedReps: 12,
-            plannedWeightKg: 24,
-            actualReps: "",
-            actualWeightKg: "",
-            isCompleted: false,
-          },
-          {
-            exerciseName: "Tricep Pushdowns",
-            notes: "Keep elbows strictly pinned to sides",
-            plannedReps: 15,
-            plannedWeightKg: 25,
-            actualReps: "",
-            actualWeightKg: "",
-            isCompleted: false,
-          },
-        ]
-  );
+  const DAYS_OF_WEEK: WeekdayName[] = [
+    "Monday",
+    "Tuesday",
+    "Wednesday",
+    "Thursday",
+    "Friday",
+    "Saturday",
+    "Sunday",
+  ];
 
-  const [isSubmitting, setIsSubmitting] = useState(false);
+  // Load weekly schedule for selected member
+  useEffect(() => {
+    if (!targetCustomerId) return;
+    let mounted = true;
+    setLoading(true);
+    fetchMemberWeeklySchedule(targetCustomerId, trainerId)
+      .then(sched => {
+        if (mounted) setSchedule(sched);
+      })
+      .catch(err => {
+        console.error("fetchMemberWeeklySchedule error:", err);
+        toast.error("Failed to load weekly schedule.");
+      })
+      .finally(() => {
+        if (mounted) setLoading(false);
+      });
+    return () => {
+      mounted = false;
+    };
+  }, [targetCustomerId, trainerId]);
 
-  const handleApplyTemplate = (tpl: typeof WORKOUT_TEMPLATES[0]) => {
-    setTitle(tpl.name);
-    setEntries(
-      tpl.entries.map(e => ({
-        exerciseName: e.exerciseName,
-        notes: `Focus on form for ${e.exerciseName}`,
-        plannedReps: e.reps,
-        plannedWeightKg: "",
-        actualReps: "",
-        actualWeightKg: "",
-        isCompleted: false,
-      }))
+  const currentDayItem = schedule.find(s => s.dayOfWeek === activeDay) || {
+    customerId: targetCustomerId,
+    trainerId,
+    dayOfWeek: activeDay,
+    workoutTitle: "Rest Day",
+    isRestDay: true,
+    focusArea: "",
+    notes: "",
+    exercises: [],
+  };
+
+  const updateCurrentDay = (updates: Partial<MemberWeeklyScheduleItem>) => {
+    setSchedule(prev =>
+      prev.map(item => (item.dayOfWeek === activeDay ? { ...item, ...updates } : item))
     );
-    toast.success(`Template "${tpl.name}" loaded!`);
   };
 
-  const handleAddEntry = () => {
-    setEntries(prev => [
-      ...prev,
-      {
-        exerciseName: "",
-        notes: "",
-        plannedReps: 10,
-        plannedWeightKg: "",
-        actualReps: "",
-        actualWeightKg: "",
-        isCompleted: false,
-      },
-    ]);
+  const handleApplyPreset = (presetName: "PPL" | "UPPER_LOWER" | "FULL_BODY") => {
+    if (!targetCustomerId) return;
+    const base = DEFAULT_WEEKLY_SCHEDULE(targetCustomerId, trainerId);
+    if (presetName === "PPL") {
+      setSchedule(base);
+      toast.success("Standard Push / Pull / Legs weekly split loaded!");
+    } else if (presetName === "UPPER_LOWER") {
+      setSchedule([
+        {
+          ...base[0],
+          workoutTitle: "Upper Body Strength",
+          isRestDay: false,
+          focusArea: "Chest, Back, Shoulders",
+          notes: "Heavy compound strength movements.",
+        },
+        {
+          ...base[1],
+          workoutTitle: "Lower Body Strength",
+          isRestDay: false,
+          focusArea: "Quads, Glutes & Hamstrings",
+          notes: "Squat and hinge focus.",
+        },
+        {
+          ...base[2],
+          workoutTitle: "Rest & Active Recovery",
+          isRestDay: true,
+          focusArea: "Recovery & Mobility",
+          notes: "Light walking, sauna/steam session.",
+          exercises: [],
+        },
+        {
+          ...base[3],
+          workoutTitle: "Upper Body Hypertrophy",
+          isRestDay: false,
+          focusArea: "Upper Body Volume",
+          notes: "Moderate weights, high time under tension.",
+        },
+        {
+          ...base[4],
+          workoutTitle: "Lower Body Hypertrophy",
+          isRestDay: false,
+          focusArea: "Legs & Core",
+          notes: "Volume work on quads and calves.",
+        },
+        {
+          ...base[5],
+          workoutTitle: "Core & Conditioning",
+          isRestDay: false,
+          focusArea: "Athletic Stamina",
+          notes: "Intervals and core stability.",
+        },
+        {
+          ...base[6],
+          workoutTitle: "Rest Day",
+          isRestDay: true,
+          focusArea: "Full Rest",
+          notes: "Complete rest and hydration.",
+          exercises: [],
+        },
+      ]);
+      toast.success("Upper / Lower 4-day split loaded!");
+    } else if (presetName === "FULL_BODY") {
+      setSchedule([
+        {
+          ...base[0],
+          workoutTitle: "Full Body Workout A",
+          isRestDay: false,
+          focusArea: "Squat & Bench Focus",
+          notes: "Heavy compounds with full body balance.",
+        },
+        {
+          ...base[1],
+          workoutTitle: "Rest & Recovery",
+          isRestDay: true,
+          focusArea: "Recovery",
+          notes: "Dynamic stretching, foam rolling.",
+          exercises: [],
+        },
+        {
+          ...base[2],
+          workoutTitle: "Full Body Workout B",
+          isRestDay: false,
+          focusArea: "Deadlift & Press Focus",
+          notes: "Posterior chain and vertical press.",
+        },
+        {
+          ...base[3],
+          workoutTitle: "Rest & Recovery",
+          isRestDay: true,
+          focusArea: "Recovery",
+          notes: "Sauna session and light walk.",
+          exercises: [],
+        },
+        {
+          ...base[4],
+          workoutTitle: "Full Body Workout C",
+          isRestDay: false,
+          focusArea: "Hypertrophy & Accessories",
+          notes: "Isolation work and core stability.",
+        },
+        {
+          ...base[5],
+          workoutTitle: "Cardio & Conditioning",
+          isRestDay: false,
+          focusArea: "Aerobic Capacity",
+          notes: "Light running or rowing intervals.",
+        },
+        {
+          ...base[6],
+          workoutTitle: "Rest Day",
+          isRestDay: true,
+          focusArea: "Full Rest",
+          notes: "Full day of rest.",
+          exercises: [],
+        },
+      ]);
+      toast.success("Full Body 3-day split loaded!");
+    }
   };
 
-  const handleRemoveEntry = (idx: number) => {
-    setEntries(prev => prev.filter((_, i) => i !== idx));
+  const handleAddExercise = () => {
+    const nextEx: ScheduledExerciseTemplate = {
+      exerciseName: "",
+      notes: "",
+      sets: [
+        { setNumber: 1, plannedReps: 12, plannedWeightKg: 50 },
+        { setNumber: 2, plannedReps: 10, plannedWeightKg: 60 },
+        { setNumber: 3, plannedReps: 8, plannedWeightKg: 70 },
+      ],
+    };
+    updateCurrentDay({
+      exercises: [...(currentDayItem.exercises || []), nextEx],
+      isRestDay: false,
+    });
   };
 
-  const handleSaveWithStatus = async (
-    targetStatus: "DRAFT" | "PUBLISHED" | "IN_PROGRESS" | "COMPLETED"
-  ) => {
-    if (!title.trim()) {
-      toast.error("Please enter a workout title / focus.");
+  const handleRemoveExercise = (idx: number) => {
+    const next = [...(currentDayItem.exercises || [])];
+    next.splice(idx, 1);
+    updateCurrentDay({ exercises: next });
+  };
+
+  const handleAddSet = (exIdx: number) => {
+    const exercises = [...(currentDayItem.exercises || [])];
+    const ex = exercises[exIdx];
+    if (!ex) return;
+    const lastSet = ex.sets[ex.sets.length - 1];
+    const newSet = {
+      setNumber: ex.sets.length + 1,
+      plannedReps: lastSet?.plannedReps ?? 10,
+      plannedWeightKg: lastSet?.plannedWeightKg ?? 50,
+    };
+    ex.sets = [...ex.sets, newSet];
+    updateCurrentDay({ exercises });
+  };
+
+  const handleRemoveSet = (exIdx: number, sIdx: number) => {
+    const exercises = [...(currentDayItem.exercises || [])];
+    const ex = exercises[exIdx];
+    if (!ex || ex.sets.length <= 1) return;
+    ex.sets = ex.sets.filter((_, i) => i !== sIdx).map((s, i) => ({ ...s, setNumber: i + 1 }));
+    updateCurrentDay({ exercises });
+  };
+
+  const handleSave = async () => {
+    if (!targetCustomerId) {
+      toast.error("Please select a member.");
       return;
     }
-    const validEntries = entries.filter(e => e.exerciseName.trim());
-    if (validEntries.length === 0) {
-      toast.error("Please provide at least one exercise entry.");
-      return;
-    }
-
-    setIsSubmitting(true);
+    setSaving(true);
     try {
-      const formattedExercises = validEntries.map(e => ({
-        id: e.id,
-        exerciseName: e.exerciseName.trim(),
-        notes: e.notes.trim() || undefined,
-        plannedReps: Number(e.plannedReps) || 10,
-        plannedWeightKg: e.plannedWeightKg !== "" && !isNaN(Number(e.plannedWeightKg)) ? Number(e.plannedWeightKg) : null,
-        actualReps: e.actualReps !== "" && !isNaN(Number(e.actualReps)) ? Number(e.actualReps) : null,
-        actualWeightKg: e.actualWeightKg !== "" && !isNaN(Number(e.actualWeightKg)) ? Number(e.actualWeightKg) : null,
-        isCompleted: Boolean(e.isCompleted),
-      }));
-
-      if (planToEdit) {
-        await saveDigitalWorkoutLog({
-          id: planToEdit.id,
-          customerId: planToEdit.customerId || targetCustomerId,
-          trainerId,
-          title: title.trim(),
-          workoutDate: workoutDate || new Date().toISOString().split("T")[0],
-          isCompleted,
-          status: targetStatus,
-          exercises: formattedExercises,
-        });
-
-        toast.success(
-          targetStatus === "DRAFT"
-            ? "Workout log saved as Draft (hidden from member)."
-            : targetStatus === "PUBLISHED"
-            ? "Workout log published! Member notified."
-            : "Workout log updated successfully!"
-        );
-      } else {
-        let customerIds: string[] = [];
-        if (targetScope === "individual") {
-          if (!targetCustomerId) {
-            toast.error("Please select a recipient member.");
-            return;
-          }
-          customerIds = [targetCustomerId];
-        } else {
-          customerIds = assignedMembers.map(m => m.customer_id);
-        }
-
-        if (targetScope === "all" && customerIds.length > 0) {
-          const ok = confirm(`Publish this workout log to all ${customerIds.length} assigned members?`);
-          if (!ok) return;
-        }
-
-        for (const cId of customerIds) {
-          await saveDigitalWorkoutLog({
-            customerId: cId,
-            trainerId,
-            title: title.trim(),
-            workoutDate: workoutDate || new Date().toISOString().split("T")[0],
-            isCompleted,
-            status: targetStatus,
-            exercises: formattedExercises,
-          });
-        }
-
-        toast.success(
-          targetStatus === "DRAFT"
-            ? "Workout log drafted! Hidden from member until published."
-            : targetScope === "all"
-            ? `Workout log published to all ${customerIds.length} members!`
-            : "Workout log published and member notified!"
-        );
-      }
-
+      await saveMemberWeeklySchedule(targetCustomerId, trainerId, schedule);
+      toast.success("Weekly workout schedule saved successfully! Previously recorded sessions are preserved.");
       onSaved();
-    } catch (err: unknown) {
-      toast.error((err as Error)?.message || "Failed to save workout log.");
+    } catch (err: any) {
+      toast.error(err.message || "Failed to save weekly schedule.");
     } finally {
-      setIsSubmitting(false);
+      setSaving(false);
     }
   };
+
+  const selectedMemberName = assignedMembers.find(m => m.customer_id === targetCustomerId)?.customer_name || "Member";
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 backdrop-blur-sm p-3 sm:p-4 overflow-y-auto">
@@ -1831,14 +1984,14 @@ function WorkoutPlanModal({
         <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
           <div className="flex items-center gap-2.5">
             <div className="w-9 h-9 rounded-xl bg-lime-400/10 border border-lime-400/20 flex items-center justify-center text-lime-400">
-              <Barbell weight="fill" className="w-5 h-5" />
+              <Calendar weight="fill" className="w-5 h-5" />
             </div>
             <div>
               <h4 className="font-black text-white text-base">
-                {planToEdit ? "Edit Digital Workout Log" : "New Digital Workout Log"}
+                Weekly Workout Schedule Setup
               </h4>
               <p className="text-[11px] text-zinc-400">
-                Gym paper log format: Date, Exercise, Notes, Planned vs Actual, Complete Status.
+                Configure Monday–Sunday training routines for <strong>{selectedMemberName}</strong>. Editing schedule never overwrites past session records.
               </p>
             </div>
           </div>
@@ -1847,350 +2000,1140 @@ function WorkoutPlanModal({
           </button>
         </div>
 
-        {/* Quick Templates Bar */}
-        {!planToEdit && (
-          <div className="bg-zinc-950/60 border border-zinc-800/80 rounded-2xl p-2.5 flex items-center justify-between gap-3">
-            <span className="text-xs text-zinc-300 font-semibold flex items-center gap-1.5 shrink-0">
-              <Sparkle weight="bold" className="w-3.5 h-3.5 text-lime-400" />
-              Quick Routine Templates:
+        {/* Member Selector if multiple */}
+        {assignedMembers.length > 1 && (
+          <div>
+            <label className={LABEL}>Assigned Member</label>
+            <select
+              value={targetCustomerId}
+              onChange={e => setTargetCustomerId(e.target.value)}
+              className={INPUT}
+            >
+              {assignedMembers.map(m => (
+                <option key={m.customer_id} value={m.customer_id}>
+                  {m.customer_name} ({m.customer_code || "Member"})
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+
+        {/* Split Presets */}
+        <div className="bg-zinc-950/60 border border-zinc-800/80 rounded-2xl p-2.5 flex flex-wrap items-center justify-between gap-2">
+          <span className="text-xs text-zinc-300 font-semibold flex items-center gap-1.5 shrink-0">
+            <Sparkle weight="bold" className="w-3.5 h-3.5 text-lime-400" />
+            Load Split Preset:
+          </span>
+          <div className="flex flex-wrap gap-1.5">
+            <button
+              type="button"
+              onClick={() => handleApplyPreset("PPL")}
+              className="px-2.5 py-1 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-lime-400 text-[11px] font-semibold border border-zinc-700 transition-colors"
+            >
+              Push / Pull / Legs (PPL)
+            </button>
+            <button
+              type="button"
+              onClick={() => handleApplyPreset("UPPER_LOWER")}
+              className="px-2.5 py-1 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-lime-400 text-[11px] font-semibold border border-zinc-700 transition-colors"
+            >
+              Upper / Lower Split
+            </button>
+            <button
+              type="button"
+              onClick={() => handleApplyPreset("FULL_BODY")}
+              className="px-2.5 py-1 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-lime-400 text-[11px] font-semibold border border-zinc-700 transition-colors"
+            >
+              Full Body 3-Day
+            </button>
+          </div>
+        </div>
+
+        {/* 7 Days Navigation Pills */}
+        <div className="flex gap-1.5 overflow-x-auto scrollbar-none pb-1">
+          {DAYS_OF_WEEK.map(day => {
+            const item = schedule.find(s => s.dayOfWeek === day);
+            const isRest = Boolean(item?.isRestDay);
+            const isActive = activeDay === day;
+            return (
+              <button
+                key={day}
+                type="button"
+                onClick={() => setActiveDay(day)}
+                className={`flex-1 min-w-[90px] py-2 px-2.5 rounded-2xl text-xs font-bold border transition-all text-center flex flex-col items-center gap-0.5 ${
+                  isActive
+                    ? "bg-lime-400 text-zinc-950 border-lime-400 shadow-md shadow-lime-400/20"
+                    : "bg-zinc-950 border-zinc-800 text-zinc-400 hover:text-white hover:border-zinc-700"
+                }`}
+              >
+                <span className="uppercase text-[10px] tracking-wider font-mono">
+                  {day.slice(0, 3)}
+                </span>
+                <span className={`text-[11px] truncate max-w-[85px] ${isRest ? "opacity-60" : "font-extrabold"}`}>
+                  {isRest ? "Rest" : item?.workoutTitle ? item.workoutTitle.split("(")[0].trim() : "Workout"}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Active Day Editor */}
+        <div className="space-y-4 overflow-y-auto flex-1 pr-1">
+          {loading ? (
+            <div className="py-12 text-center text-zinc-500">
+              <div className="w-6 h-6 border-2 border-lime-400 border-t-transparent rounded-full animate-spin mx-auto mb-2" />
+              Loading schedule...
+            </div>
+          ) : (
+            <div className="p-4 bg-zinc-950/70 border border-zinc-800 rounded-2xl space-y-3.5">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-zinc-800 pb-3">
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-black text-lime-400 uppercase tracking-wider font-mono">
+                    {activeDay}
+                  </span>
+                  <span className="text-xs text-zinc-400">
+                    {currentDayItem.isRestDay ? "Scheduled Rest Day" : "Training Routine"}
+                  </span>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => updateCurrentDay({ isRestDay: !currentDayItem.isRestDay })}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition-colors flex items-center gap-1.5 ${
+                      currentDayItem.isRestDay
+                        ? "bg-amber-400/20 text-amber-300 border-amber-400/30"
+                        : "bg-lime-400/20 text-lime-400 border-lime-400/30"
+                    }`}
+                  >
+                    <Clock weight="bold" className="w-3.5 h-3.5" />
+                    <span>{currentDayItem.isRestDay ? "Marked as Rest Day" : "Active Training Day"}</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Routine Title & Focus */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className={LABEL}>Workout Title *</label>
+                  <input
+                    type="text"
+                    value={currentDayItem.workoutTitle}
+                    onChange={e => updateCurrentDay({ workoutTitle: e.target.value })}
+                    placeholder="e.g. Push (Chest, Shoulders & Triceps)"
+                    className={INPUT}
+                  />
+                </div>
+                <div>
+                  <label className={LABEL}>Muscle Group / Focus Area</label>
+                  <input
+                    type="text"
+                    value={currentDayItem.focusArea || ""}
+                    onChange={e => updateCurrentDay({ focusArea: e.target.value })}
+                    placeholder="e.g. Chest & Triceps"
+                    className={INPUT}
+                  />
+                </div>
+              </div>
+
+              {/* Coach Notes */}
+              <div>
+                <label className={LABEL}>Training Notes & Guidance</label>
+                <input
+                  type="text"
+                  value={currentDayItem.notes || ""}
+                  onChange={e => updateCurrentDay({ notes: e.target.value })}
+                  placeholder="e.g. Controlled tempo, 2-minute rest intervals."
+                  className={INPUT}
+                />
+              </div>
+
+              {/* Exercises and Planned Sets */}
+              {!currentDayItem.isRestDay && (
+                <div className="space-y-3 pt-2">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <label className={LABEL}>
+                        Prescribed Exercises ({currentDayItem.exercises?.length || 0})
+                      </label>
+                      <span className="text-[11px] text-zinc-500">
+                        Default exercises & sets auto-loaded when logging this day&apos;s workout.
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleAddExercise}
+                      className="text-xs text-lime-400 hover:underline font-bold flex items-center gap-1"
+                    >
+                      <Plus weight="bold" className="w-3.5 h-3.5" />
+                      Add Exercise
+                    </button>
+                  </div>
+
+                  <div className="space-y-3">
+                    {(currentDayItem.exercises || []).map((ex, exIdx) => (
+                      <div
+                        key={exIdx}
+                        className="p-3 bg-zinc-900 border border-zinc-800 rounded-2xl space-y-2.5"
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <input
+                            type="text"
+                            placeholder="Exercise name (e.g. Bench Press)"
+                            value={ex.exerciseName}
+                            onChange={e => {
+                              const exercises = [...(currentDayItem.exercises || [])];
+                              exercises[exIdx] = { ...exercises[exIdx], exerciseName: e.target.value };
+                              updateCurrentDay({ exercises });
+                            }}
+                            className={`${INPUT} font-bold text-white`}
+                          />
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveExercise(exIdx)}
+                            className="p-1.5 text-zinc-500 hover:text-red-400 rounded-lg shrink-0"
+                            title="Remove Exercise"
+                          >
+                            <Trash weight="bold" className="w-4 h-4" />
+                          </button>
+                        </div>
+
+                        {/* Planned Sets for this Exercise */}
+                        <div className="space-y-1.5">
+                          <div className="flex items-center justify-between text-[10px] text-zinc-400 font-bold uppercase tracking-wider px-1">
+                            <span>Sets & Targets</span>
+                            <button
+                              type="button"
+                              onClick={() => handleAddSet(exIdx)}
+                              className="text-lime-400 hover:underline"
+                            >
+                              + Add Set
+                            </button>
+                          </div>
+
+                          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
+                            {ex.sets.map((set, sIdx) => (
+                              <div
+                                key={sIdx}
+                                className="p-2 bg-zinc-950/80 border border-zinc-800 rounded-xl flex items-center justify-between gap-2"
+                              >
+                                <span className="text-[11px] font-mono font-bold text-lime-400 shrink-0">
+                                  Set {set.setNumber}
+                                </span>
+                                <div className="flex items-center gap-1.5">
+                                  <input
+                                    type="number"
+                                    min="1"
+                                    placeholder="Reps"
+                                    value={set.plannedReps}
+                                    onChange={e => {
+                                      const exercises = [...(currentDayItem.exercises || [])];
+                                      exercises[exIdx].sets[sIdx].plannedReps = Number(e.target.value);
+                                      updateCurrentDay({ exercises });
+                                    }}
+                                    className="w-14 bg-zinc-800 border border-zinc-700 rounded-lg px-2 py-1 text-white text-xs font-mono text-center"
+                                  />
+                                  <span className="text-[10px] text-zinc-500 font-mono">×</span>
+                                  <input
+                                    type="number"
+                                    step="0.5"
+                                    placeholder="KG"
+                                    value={set.plannedWeightKg ?? ""}
+                                    onChange={e => {
+                                      const exercises = [...(currentDayItem.exercises || [])];
+                                      exercises[exIdx].sets[sIdx].plannedWeightKg = e.target.value ? Number(e.target.value) : null;
+                                      updateCurrentDay({ exercises });
+                                    }}
+                                    className="w-16 bg-zinc-800 border border-zinc-700 rounded-lg px-2 py-1 text-white text-xs font-mono text-center"
+                                  />
+                                  <span className="text-[10px] text-zinc-500 font-mono">kg</span>
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => handleRemoveSet(exIdx, sIdx)}
+                                  disabled={ex.sets.length <= 1}
+                                  className="text-zinc-600 hover:text-red-400 disabled:opacity-20 p-1"
+                                >
+                                  <X className="w-3 h-3" />
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Modal Actions */}
+        <div className="pt-3 flex items-center justify-between border-t border-zinc-800">
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={saving}
+            className="px-4 py-2.5 bg-zinc-800 hover:bg-zinc-700 text-white font-semibold rounded-xl text-xs transition-colors"
+          >
+            Cancel
+          </button>
+
+          <button
+            type="button"
+            onClick={handleSave}
+            disabled={saving}
+            className="px-5 py-2.5 bg-lime-400 hover:bg-lime-300 text-zinc-950 font-bold rounded-xl text-xs transition-colors flex items-center gap-1.5 shadow-md shadow-lime-400/20"
+          >
+            {saving ? (
+              <div className="w-3.5 h-3.5 border-2 border-zinc-950/20 border-t-zinc-950 rounded-full animate-spin" />
+            ) : (
+              <Check weight="bold" className="w-4 h-4" />
+            )}
+            <span>Save Weekly Schedule</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ==============================================================================
+// 2B. WORKOUT SESSION RECORDING MODAL (Excel-Like Multi-Set Comparison)
+// ==============================================================================
+interface SessionExerciseRow {
+  id?: string;
+  exerciseName: string;
+  notes: string;
+  sets: Array<{
+    setNumber: number;
+    plannedReps: number;
+    plannedWeightKg: number | string;
+    actualReps: number | string;
+    actualWeightKg: number | string;
+    isCompleted: boolean;
+  }>;
+}
+
+function WorkoutSessionRecordingModal({
+  trainerId,
+  assignedMembers,
+  initialCustomerId,
+  sessionToEdit,
+  onClose,
+  onSaved,
+}: {
+  trainerId: string;
+  assignedMembers: AssignedMemberItem[];
+  initialCustomerId: string | null;
+  sessionToEdit: WorkoutPlanWithExercises | null;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [targetCustomerId, setTargetCustomerId] = useState<string>(
+    sessionToEdit?.customerId || initialCustomerId || (assignedMembers.length > 0 ? assignedMembers[0].customer_id : "")
+  );
+
+  // Auto-detected today's date in local gym timezone (Africa/Addis_Ababa, UTC+3)
+  const todayDate = useMemo(() => getGymTodayDate(), []);
+  const todayWeekday = useMemo(() => getGymTodayWeekday(), []);
+
+  const [workoutDate, setWorkoutDate] = useState<string>(
+    sessionToEdit?.workoutDate || sessionToEdit?.startDate || todayDate
+  );
+  const [workoutTitle, setWorkoutTitle] = useState<string>(sessionToEdit?.title || "");
+  const [isCompleted, setIsCompleted] = useState<boolean>(Boolean(sessionToEdit?.isCompleted));
+  const [existingSessionId, setExistingSessionId] = useState<string | undefined>(sessionToEdit?.id);
+  const [isRestDayNotice, setIsRestDayNotice] = useState<boolean>(false);
+
+  const [memberSchedule, setMemberSchedule] = useState<MemberWeeklyScheduleItem[]>([]);
+  const [historicalSessions, setHistoricalSessions] = useState<WorkoutPlan[]>([]);
+  const [exercises, setExercises] = useState<SessionExerciseRow[]>([]);
+
+  const [loading, setLoading] = useState<boolean>(true);
+  const [saving, setSaving] = useState<boolean>(false);
+
+  // Initialize session: Auto-detect today's assigned workout, load existing session to prevent duplicate,
+  // and load past sessions for Excel-like column comparison
+  useEffect(() => {
+    if (!targetCustomerId) return;
+    let mounted = true;
+    setLoading(true);
+
+    async function initSession() {
+      try {
+        const [todayInfo, history, sched] = await Promise.all([
+          fetchTodayAssignedWorkout(targetCustomerId, trainerId),
+          fetchMemberWorkoutHistoryForComparison(targetCustomerId, 5),
+          fetchMemberWeeklySchedule(targetCustomerId, trainerId),
+        ]);
+
+        if (!mounted) return;
+        setMemberSchedule(sched);
+        setHistoricalSessions(history);
+
+        // 1. If editing an existing session or an existing session was found today:
+        const session = sessionToEdit || todayInfo.existingSession;
+        if (session) {
+          setExistingSessionId(session.id);
+          setWorkoutDate(session.workoutDate || session.startDate || todayDate);
+          setWorkoutTitle(session.title);
+          setIsCompleted(Boolean(session.isCompleted));
+          setIsRestDayNotice(false);
+
+          if (session.exercises && session.exercises.length > 0) {
+            setExercises(
+              session.exercises.map(e => ({
+                id: e.id,
+                exerciseName: e.exerciseName || e.exercise_name || "",
+                notes: e.notes || e.instructions || "",
+                sets:
+                  Array.isArray(e.setsData) && e.setsData.length > 0
+                    ? e.setsData.map(s => ({
+                        setNumber: s.setNumber,
+                        plannedReps: s.plannedReps,
+                        plannedWeightKg: s.plannedWeightKg != null ? s.plannedWeightKg : "",
+                        actualReps: s.actualReps != null ? s.actualReps : "",
+                        actualWeightKg: s.actualWeightKg != null ? s.actualWeightKg : "",
+                        isCompleted: Boolean(s.isCompleted),
+                      }))
+                    : [
+                        {
+                          setNumber: 1,
+                          plannedReps: Number(e.plannedReps ?? e.planned_reps ?? e.reps ?? 10),
+                          plannedWeightKg:
+                            e.plannedWeightKg != null ? e.plannedWeightKg : e.planned_weight_kg != null ? e.planned_weight_kg : "",
+                          actualReps:
+                            e.actualReps != null ? e.actualReps : e.actual_reps != null ? e.actual_reps : "",
+                          actualWeightKg:
+                            e.actualWeightKg != null ? e.actualWeightKg : e.actual_weight_kg != null ? e.actual_weight_kg : "",
+                          isCompleted: Boolean(e.isCompleted ?? e.is_completed),
+                        },
+                      ],
+              }))
+            );
+          }
+        } else {
+          // 2. New session: auto-load today's assigned workout from weekly plan
+          setExistingSessionId(undefined);
+          setWorkoutDate(todayDate);
+
+          const todaySched = todayInfo.scheduleItem;
+          if (todaySched) {
+            setWorkoutTitle(todaySched.workoutTitle);
+            setIsRestDayNotice(Boolean(todaySched.isRestDay));
+
+            if (todaySched.isRestDay || !todaySched.exercises || todaySched.exercises.length === 0) {
+              setExercises([]);
+            } else {
+              setExercises(
+                todaySched.exercises.map(e => ({
+                  exerciseName: e.exerciseName,
+                  notes: e.notes || "",
+                  sets:
+                    e.sets && e.sets.length > 0
+                      ? e.sets.map(s => ({
+                          setNumber: s.setNumber,
+                          plannedReps: s.plannedReps,
+                          plannedWeightKg: s.plannedWeightKg != null ? s.plannedWeightKg : "",
+                          actualReps: "",
+                          actualWeightKg: "",
+                          isCompleted: false,
+                        }))
+                      : [
+                          { setNumber: 1, plannedReps: 12, plannedWeightKg: 50, actualReps: "", actualWeightKg: "", isCompleted: false },
+                          { setNumber: 2, plannedReps: 10, plannedWeightKg: 60, actualReps: "", actualWeightKg: "", isCompleted: false },
+                          { setNumber: 3, plannedReps: 8, plannedWeightKg: 70, actualReps: "", actualWeightKg: "", isCompleted: false },
+                        ],
+                }))
+              );
+            }
+          } else {
+            setWorkoutTitle("Push (Chest, Shoulders & Triceps)");
+            setExercises([
+              {
+                exerciseName: "Barbell Bench Press",
+                notes: "Controlled eccentrics, pause at chest",
+                sets: [
+                  { setNumber: 1, plannedReps: 12, plannedWeightKg: 50, actualReps: "", actualWeightKg: "", isCompleted: false },
+                  { setNumber: 2, plannedReps: 10, plannedWeightKg: 60, actualReps: "", actualWeightKg: "", isCompleted: false },
+                  { setNumber: 3, plannedReps: 8, plannedWeightKg: 70, actualReps: "", actualWeightKg: "", isCompleted: false },
+                ],
+              },
+            ]);
+          }
+        }
+      } catch (err) {
+        console.error("Session init error:", err);
+      } finally {
+        if (mounted) setLoading(false);
+      }
+    }
+
+    void initSession();
+    return () => {
+      mounted = false;
+    };
+  }, [targetCustomerId, trainerId, sessionToEdit, todayDate]);
+
+  // Switch session routine without modifying weekly schedule
+  const handleSwitchRoutine = (dayItem: MemberWeeklyScheduleItem) => {
+    setWorkoutTitle(dayItem.workoutTitle);
+    setIsRestDayNotice(Boolean(dayItem.isRestDay));
+
+    if (dayItem.exercises && dayItem.exercises.length > 0) {
+      setExercises(
+        dayItem.exercises.map(e => ({
+          exerciseName: e.exerciseName,
+          notes: e.notes || "",
+          sets: e.sets.map(s => ({
+            setNumber: s.setNumber,
+            plannedReps: s.plannedReps,
+            plannedWeightKg: s.plannedWeightKg != null ? s.plannedWeightKg : "",
+            actualReps: "",
+            actualWeightKg: "",
+            isCompleted: false,
+          })),
+        }))
+      );
+    } else {
+      setExercises([]);
+    }
+    toast.success(`Switched workout to "${dayItem.workoutTitle}" for this session.`);
+  };
+
+  const handleApplyTemplate = (tpl: typeof WORKOUT_TEMPLATES[0]) => {
+    setWorkoutTitle(tpl.name);
+    setIsRestDayNotice(false);
+    setExercises(
+      tpl.entries.map(e => ({
+        exerciseName: e.exerciseName,
+        notes: `Focus on form for ${e.exerciseName}`,
+        sets: [
+          { setNumber: 1, plannedReps: e.reps, plannedWeightKg: "", actualReps: "", actualWeightKg: "", isCompleted: false },
+          { setNumber: 2, plannedReps: e.reps, plannedWeightKg: "", actualReps: "", actualWeightKg: "", isCompleted: false },
+          { setNumber: 3, plannedReps: e.reps, plannedWeightKg: "", actualReps: "", actualWeightKg: "", isCompleted: false },
+        ],
+      }))
+    );
+    toast.success(`Template "${tpl.name}" loaded for this session.`);
+  };
+
+  const handleAddExercise = () => {
+    setExercises(prev => [
+      ...prev,
+      {
+        exerciseName: "",
+        notes: "",
+        sets: [
+          { setNumber: 1, plannedReps: 12, plannedWeightKg: 50, actualReps: "", actualWeightKg: "", isCompleted: false },
+          { setNumber: 2, plannedReps: 10, plannedWeightKg: 60, actualReps: "", actualWeightKg: "", isCompleted: false },
+          { setNumber: 3, plannedReps: 8, plannedWeightKg: 70, actualReps: "", actualWeightKg: "", isCompleted: false },
+        ],
+      },
+    ]);
+  };
+
+  const handleRemoveExercise = (idx: number) => {
+    setExercises(prev => prev.filter((_, i) => i !== idx));
+  };
+
+  const handleAddSet = (exIdx: number) => {
+    setExercises(prev =>
+      prev.map((ex, i) => {
+        if (i !== exIdx) return ex;
+        const last = ex.sets[ex.sets.length - 1];
+        return {
+          ...ex,
+          sets: [
+            ...ex.sets,
+            {
+              setNumber: ex.sets.length + 1,
+              plannedReps: last?.plannedReps ?? 10,
+              plannedWeightKg: last?.plannedWeightKg ?? "",
+              actualReps: "",
+              actualWeightKg: "",
+              isCompleted: false,
+            },
+          ],
+        };
+      })
+    );
+  };
+
+  const handleRemoveSet = (exIdx: number, sIdx: number) => {
+    setExercises(prev =>
+      prev.map((ex, i) => {
+        if (i !== exIdx || ex.sets.length <= 1) return ex;
+        return {
+          ...ex,
+          sets: ex.sets.filter((_, idx) => idx !== sIdx).map((s, idx) => ({ ...s, setNumber: idx + 1 })),
+        };
+      })
+    );
+  };
+
+  const toggleSetDone = (exIdx: number, sIdx: number) => {
+    setExercises(prev =>
+      prev.map((ex, i) => {
+        if (i !== exIdx) return ex;
+        return {
+          ...ex,
+          sets: ex.sets.map((s, idx) => (idx === sIdx ? { ...s, isCompleted: !s.isCompleted } : s)),
+        };
+      })
+    );
+  };
+
+  // Up to 3 past sessions for horizontal Excel-like comparison columns
+  const comparisonSessions = useMemo(() => {
+    return historicalSessions
+      .filter(s => s.id !== existingSessionId && (s.workoutDate || s.startDate) !== workoutDate)
+      .slice(0, 3);
+  }, [historicalSessions, existingSessionId, workoutDate]);
+
+  // Single Save Workflow (Persist, notify, update history, no draft/in-progress state)
+  const handleSaveSession = async () => {
+    if (!workoutTitle.trim()) {
+      toast.error("Please enter a workout title / focus.");
+      return;
+    }
+    const validExercises = exercises.filter(e => e.exerciseName.trim());
+    if (validExercises.length === 0) {
+      toast.error("Please provide at least one exercise row.");
+      return;
+    }
+
+    setSaving(true);
+    try {
+      const formattedExercises = validExercises.map(ex => ({
+        id: ex.id,
+        exerciseName: ex.exerciseName.trim(),
+        notes: ex.notes.trim() || undefined,
+        setsData: ex.sets.map(s => ({
+          setNumber: s.setNumber,
+          plannedReps: Number(s.plannedReps) || 10,
+          plannedWeightKg: s.plannedWeightKg !== "" && !isNaN(Number(s.plannedWeightKg)) ? Number(s.plannedWeightKg) : null,
+          actualReps: s.actualReps !== "" && !isNaN(Number(s.actualReps)) ? Number(s.actualReps) : null,
+          actualWeightKg: s.actualWeightKg !== "" && !isNaN(Number(s.actualWeightKg)) ? Number(s.actualWeightKg) : null,
+          isCompleted: Boolean(s.isCompleted),
+        })),
+      }));
+
+      await saveDigitalWorkoutLog({
+        id: existingSessionId,
+        customerId: targetCustomerId,
+        trainerId,
+        title: workoutTitle.trim(),
+        workoutDate,
+        isCompleted,
+        status: "PUBLISHED",
+        exercises: formattedExercises,
+      });
+
+      toast.success(
+        existingSessionId
+          ? "Workout session updated and synced with member!"
+          : "Workout session saved and published to member!"
+      );
+      onSaved();
+    } catch (err: any) {
+      toast.error(err.message || "Failed to save workout session.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const selectedMemberName = assignedMembers.find(m => m.customer_id === targetCustomerId)?.customer_name || "Member";
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 backdrop-blur-sm p-3 sm:p-4 overflow-y-auto">
+      <div className="bg-zinc-900 border border-zinc-800 rounded-3xl p-5 sm:p-6 w-full max-w-5xl max-h-[92vh] flex flex-col space-y-4 shadow-2xl">
+        {/* Header */}
+        <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
+          <div className="flex items-center gap-2.5">
+            <div className="w-9 h-9 rounded-xl bg-lime-400/10 border border-lime-400/20 flex items-center justify-center text-lime-400">
+              <Barbell weight="fill" className="w-5 h-5" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h4 className="font-black text-white text-base">
+                  {existingSessionId ? "Edit Workout Session" : "Log Today's Workout Session"}
+                </h4>
+                <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-lime-400/20 text-lime-400 border border-lime-400/30">
+                  {todayWeekday}, {workoutDate} (Local Gym UTC+3)
+                </span>
+              </div>
+              <p className="text-[11px] text-zinc-400">
+                Member: <strong>{selectedMemberName}</strong> · Excel-like comparison against previous sessions with independent Planned vs Actual sets.
+              </p>
+            </div>
+          </div>
+          <button onClick={onClose} className="p-1.5 text-zinc-400 hover:text-white rounded-lg">
+            <X weight="bold" className="w-5 h-5" />
+          </button>
+        </div>
+
+        {/* Member Selector if multiple */}
+        {assignedMembers.length > 1 && !existingSessionId && (
+          <div>
+            <label className={LABEL}>Assigned Member</label>
+            <select
+              value={targetCustomerId}
+              onChange={e => setTargetCustomerId(e.target.value)}
+              className={INPUT}
+            >
+              {assignedMembers.map(m => (
+                <option key={m.customer_id} value={m.customer_id}>
+                  {m.customer_name} ({m.customer_code || "Member"})
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+
+        {/* Workout Routine Switcher (Allows changing workout without changing weekly schedule) */}
+        <div className="bg-zinc-950/70 border border-zinc-800 rounded-2xl p-3 space-y-2">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <span className="text-xs text-zinc-300 font-semibold flex items-center gap-1.5">
+              <Lightning weight="bold" className="w-3.5 h-3.5 text-lime-400" />
+              Switch Session Workout (Does not alter weekly schedule):
             </span>
-            <div className="flex gap-1.5 overflow-x-auto scrollbar-none">
-              {WORKOUT_TEMPLATES.map(tpl => (
+            <div className="flex flex-wrap gap-1">
+              {WORKOUT_TEMPLATES.slice(0, 3).map(tpl => (
                 <button
                   key={tpl.name}
                   type="button"
                   onClick={() => handleApplyTemplate(tpl)}
-                  className="px-2.5 py-1 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-lime-400 text-[11px] font-semibold border border-zinc-700 transition-colors whitespace-nowrap"
+                  className="px-2 py-0.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-[10px] font-semibold border border-zinc-700"
                 >
                   {tpl.name}
                 </button>
               ))}
             </div>
           </div>
-        )}
 
-        <div className="space-y-4 overflow-y-auto flex-1 pr-1">
-          {/* Recipient Member Selection */}
-          {!planToEdit && (
-            <div>
-              <label className={LABEL}>Assigned Member *</label>
-              <div className="grid grid-cols-2 gap-2 mb-2">
+          <div className="flex gap-1.5 overflow-x-auto scrollbar-none py-0.5">
+            {memberSchedule.map(dayItem => {
+              const isSelected = workoutTitle === dayItem.workoutTitle;
+              return (
                 <button
+                  key={dayItem.dayOfWeek}
                   type="button"
-                  onClick={() => setTargetScope("individual")}
-                  className={`py-2 px-3 rounded-xl text-xs font-bold border transition-colors flex items-center justify-center gap-1.5 ${
-                    targetScope === "individual"
-                      ? "bg-lime-400 text-zinc-950 border-lime-400"
-                      : "bg-zinc-800 text-zinc-400 border-zinc-700 hover:text-white"
+                  onClick={() => handleSwitchRoutine(dayItem)}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition-colors whitespace-nowrap flex items-center gap-1.5 ${
+                    isSelected
+                      ? "bg-lime-400 text-zinc-950 border-lime-400 shadow-sm"
+                      : "bg-zinc-850 text-zinc-300 border-zinc-700 hover:border-zinc-500"
                   }`}
                 >
-                  <User weight="bold" className="w-3.5 h-3.5" />
-                  Individual Member
+                  <span className="font-mono text-[10px] opacity-75">{dayItem.dayOfWeek.slice(0, 3)}:</span>
+                  <span>{dayItem.isRestDay ? "Rest Day" : dayItem.workoutTitle}</span>
                 </button>
-                <button
-                  type="button"
-                  onClick={() => setTargetScope("all")}
-                  className={`py-2 px-3 rounded-xl text-xs font-bold border transition-colors flex items-center justify-center gap-1.5 ${
-                    targetScope === "all"
-                      ? "bg-lime-400 text-zinc-950 border-lime-400"
-                      : "bg-zinc-800 text-zinc-400 border-zinc-700 hover:text-white"
-                  }`}
-                >
-                  <Users weight="bold" className="w-3.5 h-3.5" />
-                  All My Members ({assignedMembers.length})
-                </button>
-              </div>
-
-              {targetScope === "individual" ? (
-                <select
-                  value={targetCustomerId}
-                  onChange={e => setTargetCustomerId(e.target.value)}
-                  className={INPUT}
-                  required
-                >
-                  {assignedMembers.map(m => (
-                    <option key={m.customer_id} value={m.customer_id}>
-                      {m.customer_name} ({m.customer_code || "Member"})
-                    </option>
-                  ))}
-                </select>
-              ) : (
-                <p className="text-xs text-lime-400 bg-lime-400/10 border border-lime-400/20 p-2.5 rounded-xl font-medium">
-                  Will assign this workout log to all <strong>{assignedMembers.length} members</strong> under your supervision.
-                </p>
-              )}
-            </div>
-          )}
-
-          {/* Session Overview: Date, Title, Complete Workout? Yes/No, Status */}
-          <div className="grid grid-cols-1 sm:grid-cols-12 gap-3 p-3.5 bg-zinc-950/70 border border-zinc-800 rounded-2xl">
-            <div className="sm:col-span-5">
-              <label className={LABEL}>Workout Title / Focus *</label>
-              <input
-                type="text"
-                required
-                placeholder="e.g. Chest & Triceps Hypertrophy"
-                value={title}
-                onChange={e => setTitle(e.target.value)}
-                className={INPUT}
-              />
-            </div>
-
-            <div className="sm:col-span-3">
-              <label className={LABEL}>Workout Date *</label>
-              <input
-                type="date"
-                required
-                value={workoutDate}
-                onChange={e => setWorkoutDate(e.target.value)}
-                className={INPUT}
-              />
-            </div>
-
-            <div className="sm:col-span-4">
-              <label className={LABEL}>Complete Workout? (Yes/No)</label>
-              <button
-                type="button"
-                onClick={() => setIsCompleted(!isCompleted)}
-                className={`w-full py-2 px-3 rounded-xl text-xs font-bold border transition-colors flex items-center justify-center gap-2 ${
-                  isCompleted
-                    ? "bg-emerald-500/20 text-emerald-300 border-emerald-500/40"
-                    : "bg-zinc-800 text-zinc-400 border-zinc-700"
-                }`}
-              >
-                <CheckCircle weight={isCompleted ? "fill" : "regular"} className="w-4 h-4" />
-                <span>Complete Workout: {isCompleted ? "Yes" : "No"}</span>
-              </button>
-            </div>
+              );
+            })}
           </div>
 
-          {/* Digital Paper Log Entries Table */}
-          <div className="space-y-2">
-            <div className="flex items-center justify-between">
-              <div>
-                <label className={LABEL}>
-                  Exercise Paper Log ({entries.length} Exercises)
-                </label>
-                <span className="text-[11px] text-zinc-500 block">
-                  Planned and actual values are saved in separate columns to preserve training prescription vs execution.
-                </span>
-              </div>
+          {isRestDayNotice && (
+            <div className="p-2.5 rounded-xl bg-amber-400/10 border border-amber-400/25 text-amber-300 text-xs flex items-center justify-between gap-2">
+              <span>
+                Today ({todayWeekday}) is scheduled as <strong>Rest Day</strong> for {selectedMemberName}. You can select any workout routine above to log a workout.
+              </span>
               <button
                 type="button"
-                onClick={handleAddEntry}
-                className="text-xs text-lime-400 hover:underline font-bold"
+                onClick={() => {
+                  const firstWork = memberSchedule.find(s => !s.isRestDay) || memberSchedule[0];
+                  if (firstWork) handleSwitchRoutine(firstWork);
+                }}
+                className="px-2.5 py-1 bg-amber-400 text-zinc-950 font-bold rounded-lg text-[11px] shrink-0"
               >
-                + Add Exercise Row
+                Switch to Workout
               </button>
             </div>
+          )}
+        </div>
 
-            <div className="space-y-2.5">
-              {entries.map((entry, idx) => (
+        {/* Session Focus & Complete Workout Toggle */}
+        <div className="grid grid-cols-1 sm:grid-cols-12 gap-3 p-3.5 bg-zinc-950/70 border border-zinc-800 rounded-2xl">
+          <div className="sm:col-span-8">
+            <label className={LABEL}>Workout Title / Focus *</label>
+            <input
+              type="text"
+              required
+              placeholder="e.g. Push (Chest, Shoulders & Triceps)"
+              value={workoutTitle}
+              onChange={e => setWorkoutTitle(e.target.value)}
+              className={INPUT}
+            />
+          </div>
+
+          <div className="sm:col-span-4 flex flex-col justify-end">
+            <button
+              type="button"
+              onClick={() => setIsCompleted(!isCompleted)}
+              className={`w-full py-2 px-3 rounded-xl text-xs font-bold border transition-colors flex items-center justify-center gap-2 ${
+                isCompleted
+                  ? "bg-emerald-500/20 text-emerald-300 border-emerald-500/40"
+                  : "bg-zinc-800 text-zinc-400 border-zinc-700"
+              }`}
+            >
+              <CheckCircle weight={isCompleted ? "fill" : "regular"} className="w-4 h-4 text-lime-400" />
+              <span>Complete Workout: {isCompleted ? "Yes" : "No"}</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Excel-Like Multi-Set Workout Recording Table with In-Place History */}
+        <div className="space-y-3 overflow-y-auto flex-1 pr-1">
+          <div className="flex items-center justify-between">
+            <div>
+              <label className={LABEL}>
+                Exercise Multi-Set Log ({exercises.length} Exercises)
+              </label>
+              <span className="text-[11px] text-zinc-500 block">
+                Historical performance columns appear alongside today&apos;s inputs. Planned and actual values are stored separately per set.
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={handleAddExercise}
+              className="text-xs text-lime-400 hover:underline font-bold flex items-center gap-1"
+            >
+              <Plus weight="bold" className="w-3.5 h-3.5" />
+              Add Exercise
+            </button>
+          </div>
+
+          {loading ? (
+            <div className="py-12 text-center text-zinc-500">
+              <div className="w-6 h-6 border-2 border-lime-400 border-t-transparent rounded-full animate-spin mx-auto mb-2" />
+              Loading workout details and history...
+            </div>
+          ) : exercises.length === 0 ? (
+            <div className="py-10 text-center text-zinc-500 bg-zinc-950/60 rounded-2xl border border-zinc-800">
+              <Barbell className="w-10 h-10 mx-auto text-zinc-700 mb-2" />
+              <p className="text-sm font-semibold text-zinc-400">No exercises in this session</p>
+              <button
+                type="button"
+                onClick={handleAddExercise}
+                className="mt-2 text-xs bg-lime-400 text-zinc-950 font-bold px-3 py-1.5 rounded-xl hover:bg-lime-300"
+              >
+                + Add First Exercise
+              </button>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {exercises.map((ex, exIdx) => (
                 <div
-                  key={idx}
-                  className="p-3 bg-zinc-950/80 border border-zinc-800 rounded-2xl grid grid-cols-1 sm:grid-cols-12 gap-2.5 items-center"
+                  key={exIdx}
+                  className="bg-zinc-950/80 border border-zinc-800 rounded-2xl p-3.5 space-y-3 shadow-sm"
                 >
-                  {/* Exercise Name & Notes */}
-                  <div className="sm:col-span-4 space-y-1.5">
-                    <div>
-                      <span className="text-[10px] text-zinc-500 font-bold uppercase">Exercise</span>
+                  {/* Exercise Header */}
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-zinc-800/80 pb-2">
+                    <div className="flex-1 flex items-center gap-2">
+                      <span className="text-xs font-mono font-bold text-lime-400 px-2 py-0.5 rounded bg-lime-400/10">
+                        #{exIdx + 1}
+                      </span>
                       <input
                         type="text"
-                        required
-                        placeholder="Exercise (e.g. Bench Press)"
-                        value={entry.exerciseName}
+                        placeholder="Exercise name (e.g. Bench Press)"
+                        value={ex.exerciseName}
                         onChange={e => {
                           const val = e.target.value;
-                          setEntries(prev => prev.map((it, i) => (i === idx ? { ...it, exerciseName: val } : it)));
+                          setExercises(prev =>
+                            prev.map((it, i) => (i === exIdx ? { ...it, exerciseName: val } : it))
+                          );
                         }}
-                        className={INPUT}
+                        className={`${INPUT} font-bold text-white max-w-sm`}
                       />
-                    </div>
-                    <div>
-                      <span className="text-[10px] text-zinc-500 font-bold uppercase">Notes / Cues</span>
                       <input
                         type="text"
-                        placeholder="Notes (e.g. 3s eccentric, pause)"
-                        value={entry.notes}
+                        placeholder="Notes / instructions (e.g. pause at bottom)"
+                        value={ex.notes}
                         onChange={e => {
                           const val = e.target.value;
-                          setEntries(prev => prev.map((it, i) => (i === idx ? { ...it, notes: val } : it)));
+                          setExercises(prev =>
+                            prev.map((it, i) => (i === exIdx ? { ...it, notes: val } : it))
+                          );
                         }}
-                        className={INPUT}
+                        className={`${INPUT} text-xs text-zinc-300`}
                       />
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => handleAddSet(exIdx)}
+                        className="text-xs text-lime-400 hover:text-lime-300 font-bold flex items-center gap-1 px-2.5 py-1 rounded-lg bg-zinc-800 hover:bg-zinc-750 border border-zinc-700"
+                      >
+                        <Plus weight="bold" className="w-3 h-3" />
+                        Add Set
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveExercise(exIdx)}
+                        className="p-1 text-zinc-500 hover:text-red-400 rounded-lg"
+                        title="Remove Exercise"
+                      >
+                        <Trash weight="bold" className="w-4 h-4" />
+                      </button>
                     </div>
                   </div>
 
-                  {/* Planned Reps & Weight */}
-                  <div className="sm:col-span-3 grid grid-cols-2 gap-1.5 p-2 bg-cyan-400/5 border border-cyan-400/15 rounded-xl">
-                    <div>
-                      <span className="text-[10px] text-cyan-400 font-bold uppercase block">Plan Reps</span>
-                      <input
-                        type="number"
-                        min="1"
-                        required
-                        placeholder="10"
-                        value={entry.plannedReps}
-                        onChange={e => {
-                          const val = Number(e.target.value);
-                          setEntries(prev => prev.map((it, i) => (i === idx ? { ...it, plannedReps: val } : it)));
-                        }}
-                        className={INPUT}
-                      />
-                    </div>
-                    <div>
-                      <span className="text-[10px] text-cyan-400 font-bold uppercase block">Plan KG</span>
-                      <input
-                        type="number"
-                        step="0.5"
-                        placeholder="KG"
-                        value={entry.plannedWeightKg}
-                        onChange={e => {
-                          const val = e.target.value;
-                          setEntries(prev => prev.map((it, i) => (i === idx ? { ...it, plannedWeightKg: val } : it)));
-                        }}
-                        className={INPUT}
-                      />
-                    </div>
-                  </div>
+                  {/* Excel-Like Table: Set # | Past Session 1 | Past Session 2 | Past Session 3 | Today (Editable) */}
+                  <div className="overflow-x-auto rounded-xl border border-zinc-800/70 bg-zinc-900/50">
+                    <table className="w-full text-left text-xs border-collapse">
+                      <thead>
+                        <tr className="border-b border-zinc-800 bg-zinc-900 text-[10px] uppercase font-bold text-zinc-400">
+                          <th className="py-2 px-3 text-center w-14">Set #</th>
+                          {/* Historical Session Columns */}
+                          {comparisonSessions.map(comp => (
+                            <th
+                              key={comp.id}
+                              className="py-2 px-3 text-center bg-zinc-850/80 font-mono text-zinc-300 border-x border-zinc-800 min-w-[120px]"
+                            >
+                              {new Date(comp.workoutDate || comp.startDate || comp.createdAt).toLocaleDateString("en-US", {
+                                month: "short",
+                                day: "numeric",
+                              })}
+                              <span className="block text-[9px] text-zinc-500 font-normal">Past Performance</span>
+                            </th>
+                          ))}
+                          {comparisonSessions.length === 0 && (
+                            <th className="py-2 px-3 text-center bg-zinc-850/50 text-zinc-500 font-mono text-[10px] min-w-[120px]">
+                              No Past Sessions
+                            </th>
+                          )}
+                          {/* Today Column (Editable Inputs) */}
+                          <th className="py-2 px-3 text-center bg-lime-400/10 text-lime-400 border-l border-lime-400/30 min-w-[320px]">
+                            Today ({workoutDate}) — Planned vs Actual
+                          </th>
+                          <th className="py-2 px-2 text-center w-12">Action</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-zinc-800/50">
+                        {ex.sets.map((set, sIdx) => (
+                          <tr key={sIdx} className="hover:bg-zinc-850/30">
+                            {/* Set # */}
+                            <td className="py-2 px-3 text-center font-mono font-bold text-lime-400">
+                              Set {set.setNumber}
+                            </td>
 
-                  {/* Actual Reps & Weight */}
-                  <div className="sm:col-span-3 grid grid-cols-2 gap-1.5 p-2 bg-lime-400/5 border border-lime-400/15 rounded-xl">
-                    <div>
-                      <span className="text-[10px] text-lime-400 font-bold uppercase block">Act. Reps</span>
-                      <input
-                        type="number"
-                        min="0"
-                        placeholder="Actual"
-                        value={entry.actualReps}
-                        onChange={e => {
-                          const val = e.target.value;
-                          setEntries(prev => prev.map((it, i) => (i === idx ? { ...it, actualReps: val } : it)));
-                        }}
-                        className={INPUT}
-                      />
-                    </div>
-                    <div>
-                      <span className="text-[10px] text-lime-400 font-bold uppercase block">Act. KG</span>
-                      <input
-                        type="number"
-                        step="0.5"
-                        placeholder="KG"
-                        value={entry.actualWeightKg}
-                        onChange={e => {
-                          const val = e.target.value;
-                          setEntries(prev => prev.map((it, i) => (i === idx ? { ...it, actualWeightKg: val } : it)));
-                        }}
-                        className={INPUT}
-                      />
-                    </div>
-                  </div>
+                            {/* Historical Columns */}
+                            {comparisonSessions.map(comp => {
+                              const compEx = comp.exercises.find(
+                                e => (e.exerciseName || e.exercise_name || "").toLowerCase().trim() === ex.exerciseName.toLowerCase().trim()
+                              );
+                              const compSet =
+                                compEx?.setsData?.find(s => s.setNumber === set.setNumber) ||
+                                (compEx?.setsData && compEx.setsData[sIdx]) ||
+                                (compEx && set.setNumber === 1
+                                  ? {
+                                      actualWeightKg: compEx.actualWeightKg,
+                                      actualReps: compEx.actualReps,
+                                      plannedWeightKg: compEx.plannedWeightKg,
+                                      plannedReps: compEx.plannedReps,
+                                    }
+                                  : null);
 
-                  {/* Done & Remove */}
-                  <div className="sm:col-span-2 flex items-center justify-between sm:justify-end gap-2 pt-1 sm:pt-0">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setEntries(prev =>
-                          prev.map((it, i) => (i === idx ? { ...it, isCompleted: !it.isCompleted } : it))
-                        );
-                      }}
-                      className={`px-2.5 py-1.5 rounded-xl text-[11px] font-bold border transition-colors flex items-center gap-1 ${
-                        entry.isCompleted
-                          ? "bg-lime-400/20 text-lime-400 border-lime-400/30"
-                          : "bg-zinc-800 text-zinc-400 border-zinc-700"
-                      }`}
-                    >
-                      <CheckCircle weight={entry.isCompleted ? "fill" : "regular"} className="w-3.5 h-3.5" />
-                      <span>{entry.isCompleted ? "Done" : "Pending"}</span>
-                    </button>
+                              const hasData = compSet && (compSet.actualWeightKg != null || compSet.actualReps != null || compSet.plannedWeightKg != null);
+                              const weight = compSet?.actualWeightKg ?? compSet?.plannedWeightKg;
+                              const reps = compSet?.actualReps ?? compSet?.plannedReps;
 
-                    <button
-                      type="button"
-                      onClick={() => handleRemoveEntry(idx)}
-                      disabled={entries.length <= 1}
-                      className="p-1.5 text-zinc-500 hover:text-red-400 disabled:opacity-30 rounded-lg"
-                      title="Remove exercise"
-                    >
-                      <Trash weight="bold" className="w-4 h-4" />
-                    </button>
+                              return (
+                                <td
+                                  key={comp.id}
+                                  className="py-2 px-3 text-center font-mono text-xs border-x border-zinc-800/60 bg-zinc-950/30"
+                                >
+                                  {hasData ? (
+                                    <span className="inline-block px-2 py-0.5 rounded bg-zinc-800/90 text-zinc-200 font-bold border border-zinc-700/60">
+                                      {weight != null ? `${weight}kg` : "BW"} × {reps ?? "—"}
+                                    </span>
+                                  ) : (
+                                    <span className="text-zinc-600">—</span>
+                                  )}
+                                </td>
+                              );
+                            })}
+                            {comparisonSessions.length === 0 && (
+                              <td className="py-2 px-3 text-center text-zinc-600 font-mono text-xs">
+                                —
+                              </td>
+                            )}
+
+                            {/* Today Column: Independently Editable Planned and Actual values */}
+                            <td className="py-2 px-3 bg-lime-400/5 border-l border-lime-400/20">
+                              <div className="flex flex-wrap items-center justify-center gap-2">
+                                {/* Planned Prescription */}
+                                <div className="flex items-center gap-1 bg-cyan-400/10 border border-cyan-400/20 rounded-lg px-2 py-1">
+                                  <span className="text-[10px] font-bold text-cyan-400 uppercase font-mono">Plan:</span>
+                                  <input
+                                    type="number"
+                                    step="0.5"
+                                    placeholder="KG"
+                                    value={set.plannedWeightKg}
+                                    onChange={e => {
+                                      const val = e.target.value;
+                                      setExercises(prev =>
+                                        prev.map((item, i) =>
+                                          i !== exIdx
+                                            ? item
+                                            : {
+                                                ...item,
+                                                sets: item.sets.map((s, idx) =>
+                                                  idx === sIdx ? { ...s, plannedWeightKg: val } : s
+                                                ),
+                                              }
+                                        )
+                                      );
+                                    }}
+                                    className="w-14 bg-zinc-900 border border-zinc-700 rounded px-1.5 py-0.5 text-white font-mono text-xs text-center"
+                                  />
+                                  <span className="text-[10px] text-zinc-400 font-mono">kg ×</span>
+                                  <input
+                                    type="number"
+                                    min="1"
+                                    placeholder="Reps"
+                                    value={set.plannedReps}
+                                    onChange={e => {
+                                      const val = Number(e.target.value);
+                                      setExercises(prev =>
+                                        prev.map((item, i) =>
+                                          i !== exIdx
+                                            ? item
+                                            : {
+                                                ...item,
+                                                sets: item.sets.map((s, idx) =>
+                                                  idx === sIdx ? { ...s, plannedReps: val } : s
+                                                ),
+                                              }
+                                        )
+                                      );
+                                    }}
+                                    className="w-12 bg-zinc-900 border border-zinc-700 rounded px-1.5 py-0.5 text-white font-mono text-xs text-center"
+                                  />
+                                </div>
+
+                                {/* Actual Performance */}
+                                <div className="flex items-center gap-1 bg-lime-400/10 border border-lime-400/20 rounded-lg px-2 py-1">
+                                  <span className="text-[10px] font-bold text-lime-400 uppercase font-mono">Act:</span>
+                                  <input
+                                    type="number"
+                                    step="0.5"
+                                    placeholder="KG"
+                                    value={set.actualWeightKg}
+                                    onChange={e => {
+                                      const val = e.target.value;
+                                      setExercises(prev =>
+                                        prev.map((item, i) =>
+                                          i !== exIdx
+                                            ? item
+                                            : {
+                                                ...item,
+                                                sets: item.sets.map((s, idx) =>
+                                                  idx === sIdx ? { ...s, actualWeightKg: val } : s
+                                                ),
+                                              }
+                                        )
+                                      );
+                                    }}
+                                    className="w-14 bg-zinc-900 border border-zinc-700 rounded px-1.5 py-0.5 text-white font-mono text-xs text-center font-bold text-lime-300"
+                                  />
+                                  <span className="text-[10px] text-zinc-400 font-mono">kg ×</span>
+                                  <input
+                                    type="number"
+                                    min="0"
+                                    placeholder="Reps"
+                                    value={set.actualReps}
+                                    onChange={e => {
+                                      const val = e.target.value;
+                                      setExercises(prev =>
+                                        prev.map((item, i) =>
+                                          i !== exIdx
+                                            ? item
+                                            : {
+                                                ...item,
+                                                sets: item.sets.map((s, idx) =>
+                                                  idx === sIdx ? { ...s, actualReps: val } : s
+                                                ),
+                                              }
+                                        )
+                                      );
+                                    }}
+                                    className="w-12 bg-zinc-900 border border-zinc-700 rounded px-1.5 py-0.5 text-white font-mono text-xs text-center font-bold text-lime-300"
+                                  />
+                                </div>
+
+                                {/* Done Toggle */}
+                                <button
+                                  type="button"
+                                  onClick={() => toggleSetDone(exIdx, sIdx)}
+                                  className={`px-2 py-1 rounded-lg text-[10px] font-bold border transition-colors flex items-center gap-1 ${
+                                    set.isCompleted
+                                      ? "bg-lime-400 text-zinc-950 border-lime-400"
+                                      : "bg-zinc-800 text-zinc-400 border-zinc-700 hover:text-white"
+                                  }`}
+                                >
+                                  <CheckCircle weight={set.isCompleted ? "fill" : "regular"} className="w-3 h-3" />
+                                  <span>{set.isCompleted ? "Done" : "Pending"}</span>
+                                </button>
+                              </div>
+                            </td>
+
+                            {/* Remove Set */}
+                            <td className="py-2 px-2 text-center">
+                              <button
+                                type="button"
+                                onClick={() => handleRemoveSet(exIdx, sIdx)}
+                                disabled={ex.sets.length <= 1}
+                                className="text-zinc-600 hover:text-red-400 disabled:opacity-20 p-1"
+                                title="Remove set"
+                              >
+                                <X className="w-3.5 h-3.5" />
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
                   </div>
                 </div>
               ))}
             </div>
-          </div>
+          )}
         </div>
 
-        {/* Modal Actions */}
-        <div className="pt-3 flex flex-wrap items-center justify-between gap-2 border-t border-zinc-800">
+        {/* Modal Actions: Simple Save Workflow (Single Save button, no draft/in-progress) */}
+        <div className="pt-3 flex items-center justify-between border-t border-zinc-800">
           <button
             type="button"
             onClick={onClose}
-            disabled={isSubmitting}
+            disabled={saving}
             className="px-4 py-2.5 bg-zinc-800 hover:bg-zinc-700 text-white font-semibold rounded-xl text-xs transition-colors"
           >
             Cancel
           </button>
 
-          <div className="flex flex-wrap items-center gap-2">
-            {/* Save as Draft Button */}
-            <button
-              type="button"
-              onClick={() => handleSaveWithStatus("DRAFT")}
-              disabled={isSubmitting}
-              className="px-4 py-2.5 bg-amber-400/15 hover:bg-amber-400/25 text-amber-300 font-bold border border-amber-400/30 rounded-xl text-xs transition-colors flex items-center gap-1.5 shadow-sm"
-              title="Save as Draft (hidden from member)"
-            >
-              Save as Draft
-            </button>
-
-            {/* In Progress option if editing */}
-            {planToEdit && (
-              <button
-                type="button"
-                onClick={() => handleSaveWithStatus("IN_PROGRESS")}
-                disabled={isSubmitting}
-                className="px-4 py-2.5 bg-blue-500/20 hover:bg-blue-500/30 text-blue-300 font-bold border border-blue-500/30 rounded-xl text-xs transition-colors"
-              >
-                In Progress
-              </button>
+          <button
+            type="button"
+            onClick={handleSaveSession}
+            disabled={saving}
+            className="px-6 py-2.5 bg-lime-400 hover:bg-lime-300 text-zinc-950 font-bold rounded-xl text-xs transition-colors flex items-center gap-1.5 shadow-md shadow-lime-400/20"
+          >
+            {saving ? (
+              <div className="w-3.5 h-3.5 border-2 border-zinc-950/20 border-t-zinc-950 rounded-full animate-spin" />
+            ) : (
+              <Check weight="bold" className="w-4 h-4" />
             )}
-
-            {/* Complete option if editing */}
-            {planToEdit && (
-              <button
-                type="button"
-                onClick={() => {
-                  setIsCompleted(true);
-                  handleSaveWithStatus("COMPLETED");
-                }}
-                disabled={isSubmitting}
-                className="px-4 py-2.5 bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 font-bold border border-emerald-500/30 rounded-xl text-xs transition-colors"
-              >
-                Mark Completed
-              </button>
-            )}
-
-            {/* Publish Button */}
-            <button
-              type="button"
-              onClick={() => handleSaveWithStatus("PUBLISHED")}
-              disabled={isSubmitting}
-              className="px-5 py-2.5 bg-lime-400 hover:bg-lime-300 text-zinc-950 font-bold rounded-xl text-xs transition-colors flex items-center gap-1.5 shadow-md shadow-lime-400/20"
-            >
-              {isSubmitting ? (
-                <div className="w-3.5 h-3.5 border-2 border-zinc-950/20 border-t-zinc-950 rounded-full animate-spin" />
-              ) : (
-                <Check weight="bold" className="w-4 h-4" />
-              )}
-              <span>{planToEdit?.status === "PUBLISHED" ? "Save & Update Member" : "Publish Workout"}</span>
-            </button>
-          </div>
+            <span>{existingSessionId ? "Update Workout Session" : "Save Workout Session"}</span>
+          </button>
         </div>
       </div>
     </div>
   );
 }
+
 
 // ==============================================================================
 // 3. MEAL PLAN MODAL

@@ -118,10 +118,8 @@ export function getStartOfTodayIso(): string {
 
 function parseCustomerCategory(rawType?: string | null): CustomerCategory {
   const normalized = (rawType || "").toUpperCase().trim();
-  if (normalized === "STUDENT") return "STUDENT";
-  if (normalized === "MUSLIM") return "MUSLIM";
-  if (normalized === "AEROBICS") return "AEROBICS";
-  return "REGULAR";
+  if (!normalized) return "REGULAR";
+  return normalized as CustomerCategory;
 }
 
 /**

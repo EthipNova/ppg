@@ -166,7 +166,7 @@ function RulesSection() {
               <h3 className="text-xl font-bold mb-4">{editing ? "Edit rule" : "New access rule"}</h3>
               <div className="space-y-3">
                 <select value={form.category} onChange={e => setForm({ ...form, category: e.target.value as CustomerCategory })} className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-4 py-2.5 text-white focus:outline-none">
-                  {ALL_CATEGORIES.map(c => <option key={c} value={c}>{categoryLabelOf(state, c)}</option>)}
+                  {state.categoryLabels.filter(c => c.isActive !== false).map(c => <option key={c.category} value={c.category}>{c.label}</option>)}
                 </select>
                 <div>
                   <label className="text-xs text-zinc-500 block mb-2">Allowed days</label>
