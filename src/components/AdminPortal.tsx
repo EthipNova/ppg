@@ -26,8 +26,7 @@ import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContai
 import { useGym, useT, formatETB, addAudit } from "../context/GymContext";
 import { toast } from "sonner";
 import { CustomersView } from "./AdminCustomers";
-import AdminStaffManagement from "./AdminStaffManagement";
-import AdminTrainerManagement from "./AdminTrainerManagement";
+import AdminStaffTrainersManagement from "./AdminStaffTrainersManagement";
 import AdminCategoriesPlans from "./AdminCategoriesPlans";
 import AdminFinancesReports from "./AdminFinancesReports";
 import AdminFacilitiesManagement from "./AdminFacilitiesManagement";
@@ -47,8 +46,7 @@ import {
 const TABS = [
   "dashboard",
   "customers",
-  "trainers",
-  "staff",
+  "staff_trainers",
   "categories_plans",
   "finances_reports",
   "facilities",
@@ -58,8 +56,7 @@ type Tab = (typeof TABS)[number];
 const TAB_LABEL: Record<Tab, string> = {
   dashboard: "admin.tab.dashboard",
   customers: "admin.tab.customers",
-  trainers: "admin.tab.trainers",
-  staff: "admin.tab.staff",
+  staff_trainers: "admin.tab.staff_trainers",
   categories_plans: "admin.tab.categories_plans",
   finances_reports: "admin.tab.finances_reports",
   facilities: "admin.tab.facilities",
@@ -69,8 +66,7 @@ const TAB_LABEL: Record<Tab, string> = {
 const TAB_TO_SLUG: Record<Tab, string> = {
   dashboard: "dashboard",
   customers: "customers",
-  trainers: "trainers",
-  staff: "staff",
+  staff_trainers: "staff-trainers",
   categories_plans: "categories-plans",
   finances_reports: "finances-reports",
   facilities: "facilities",
@@ -80,8 +76,10 @@ const TAB_TO_SLUG: Record<Tab, string> = {
 const SLUG_TO_TAB: Record<string, Tab> = {
   dashboard: "dashboard",
   customers: "customers",
-  trainers: "trainers",
-  staff: "staff",
+  staff_trainers: "staff_trainers",
+  "staff-trainers": "staff_trainers",
+  trainers: "staff_trainers",
+  staff: "staff_trainers",
   "categories-plans": "categories_plans",
   categories_plans: "categories_plans",
   "finances-reports": "finances_reports",
@@ -148,8 +146,14 @@ export default function AdminPortal() {
           <motion.div key={tab} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} transition={{ duration: 0.2 }}>
             {tab === "dashboard" && <DashboardView />}
             {tab === "customers" && <CustomersView />}
-            {tab === "trainers" && <AdminTrainerManagement />}
-            {tab === "staff" && <AdminStaffManagement />}
+            {tab === "staff_trainers" && (
+              <AdminStaffTrainersManagement
+                initialSubTab={section?.toLowerCase() === "trainers" ? "trainers" : "staff"}
+                onSubTabChange={(subTab) => {
+                  navigate(`/admin/${subTab}`);
+                }}
+              />
+            )}
             {tab === "categories_plans" && <AdminCategoriesPlans />}
             {tab === "finances_reports" && <AdminFinancesReports />}
             {tab === "facilities" && <AdminFacilitiesManagement />}

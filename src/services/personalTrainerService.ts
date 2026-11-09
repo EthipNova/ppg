@@ -137,15 +137,35 @@ export interface AssignedMemberRecord {
   };
 }
 
+export type WorkoutPlanStatus =
+  | "DRAFT"
+  | "PUBLISHED"
+  | "IN_PROGRESS"
+  | "COMPLETED"
+  | "ACTIVE"
+  | "ARCHIVED";
+
 export interface WorkoutExercise {
   id?: string;
   workoutPlanId?: string;
+  workout_plan_id?: string;
   dayOfWeek: string;
   day_of_week?: string;
   exerciseName: string;
   exercise_name?: string;
   sets: number;
   reps: number | string;
+  notes?: string | null;
+  plannedReps?: number;
+  planned_reps?: number;
+  plannedWeightKg?: number | null;
+  planned_weight_kg?: number | null;
+  actualReps?: number | null;
+  actual_reps?: number | null;
+  actualWeightKg?: number | null;
+  actual_weight_kg?: number | null;
+  isCompleted?: boolean;
+  is_completed?: boolean;
   durationSeconds?: number;
   duration_seconds?: number | null;
   restSeconds?: number;
@@ -164,14 +184,30 @@ export interface WorkoutPlan {
   trainerId: string;
   title: string;
   description: string | null;
+  workoutDate?: string;
+  workout_date?: string;
   startDate: string;
   start_date?: string;
   endDate: string | null;
   end_date?: string | null;
-  status: "ACTIVE" | "COMPLETED" | "ARCHIVED";
+  status: WorkoutPlanStatus;
+  isCompleted?: boolean;
+  is_completed?: boolean;
   isTemplate: boolean;
   createdAt: string;
   exercises: WorkoutExercise[];
+}
+
+export interface InAppNotification {
+  id: string;
+  userId?: string | null;
+  customerId?: string | null;
+  title: string;
+  message: string;
+  type: string;
+  link?: string | null;
+  isRead: boolean;
+  createdAt: string;
 }
 
 export interface MealItem {
@@ -657,6 +693,8 @@ export async function fetchMemberWorkoutPlans(customerId: string): Promise<Worko
       trainer_id,
       title,
       description,
+      workout_date,
+      is_completed,
       start_date,
       end_date,
       status,
@@ -667,8 +705,14 @@ export async function fetchMemberWorkoutPlans(customerId: string): Promise<Worko
         workout_plan_id,
         day_of_week,
         exercise_name,
+        notes,
         sets,
         reps,
+        planned_reps,
+        planned_weight_kg,
+        actual_reps,
+        actual_weight_kg,
+        is_completed,
         duration_seconds,
         rest_seconds,
         instructions,
@@ -691,11 +735,15 @@ export async function fetchMemberWorkoutPlans(customerId: string): Promise<Worko
     trainerId: p.trainer_id,
     title: p.title,
     description: p.description,
+    workoutDate: p.workout_date || p.start_date,
+    workout_date: p.workout_date || p.start_date,
     startDate: p.start_date,
     start_date: p.start_date,
     endDate: p.end_date,
     end_date: p.end_date,
     status: p.status,
+    isCompleted: Boolean(p.is_completed),
+    is_completed: Boolean(p.is_completed),
     isTemplate: Boolean(p.is_template),
     createdAt: p.created_at,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -705,17 +753,28 @@ export async function fetchMemberWorkoutPlans(customerId: string): Promise<Worko
       .map((e: any) => ({
         id: e.id,
         workoutPlanId: e.workout_plan_id,
-        dayOfWeek: e.day_of_week,
-        day_of_week: e.day_of_week,
+        dayOfWeek: e.day_of_week || "Day 1",
+        day_of_week: e.day_of_week || "Day 1",
         exerciseName: e.exercise_name,
         exercise_name: e.exercise_name,
+        notes: e.notes || e.instructions || "",
+        instructions: e.instructions || e.notes || "",
         sets: Number(e.sets) || 3,
         reps: e.reps || 10,
+        plannedReps: Number(e.planned_reps ?? e.reps ?? 10),
+        planned_reps: Number(e.planned_reps ?? e.reps ?? 10),
+        plannedWeightKg: e.planned_weight_kg != null ? Number(e.planned_weight_kg) : null,
+        planned_weight_kg: e.planned_weight_kg != null ? Number(e.planned_weight_kg) : null,
+        actualReps: e.actual_reps != null ? Number(e.actual_reps) : null,
+        actual_reps: e.actual_reps != null ? Number(e.actual_reps) : null,
+        actualWeightKg: e.actual_weight_kg != null ? Number(e.actual_weight_kg) : null,
+        actual_weight_kg: e.actual_weight_kg != null ? Number(e.actual_weight_kg) : null,
+        isCompleted: Boolean(e.is_completed),
+        is_completed: Boolean(e.is_completed),
         durationSeconds: e.duration_seconds ? Number(e.duration_seconds) : undefined,
         duration_seconds: e.duration_seconds ? Number(e.duration_seconds) : null,
         restSeconds: e.rest_seconds ? Number(e.rest_seconds) : undefined,
         rest_interval_seconds: e.rest_seconds ? Number(e.rest_seconds) : null,
-        instructions: e.instructions || "",
         videoUrl: e.video_url || undefined,
         orderIndex: Number(e.order_index) || 0,
       })),
@@ -727,11 +786,14 @@ export async function createWorkoutPlan(params: {
   trainerId: string;
   title: string;
   description?: string;
+  workoutDate?: string;
+  isCompleted?: boolean;
   startDate?: string;
   endDate?: string;
-  status?: "ACTIVE" | "COMPLETED" | "ARCHIVED";
+  status?: WorkoutPlanStatus;
   exercises: Omit<WorkoutExercise, "id" | "workoutPlanId">[];
 }): Promise<string> {
+  const workoutDate = params.workoutDate || params.startDate || new Date().toISOString().split("T")[0];
   const { data: plan, error: planError } = await ptDb
     .from("workout_plans")
     .insert({
@@ -739,9 +801,11 @@ export async function createWorkoutPlan(params: {
       trainer_id: params.trainerId,
       title: params.title.trim(),
       description: params.description?.trim() || null,
-      start_date: params.startDate || new Date().toISOString().split("T")[0],
+      workout_date: workoutDate,
+      start_date: workoutDate,
       end_date: params.endDate || null,
       status: params.status || "ACTIVE",
+      is_completed: Boolean(params.isCompleted),
     })
     .select("id")
     .single();
@@ -756,11 +820,17 @@ export async function createWorkoutPlan(params: {
       workout_plan_id: (plan as any).id,
       day_of_week: ex.dayOfWeek || ex.day_of_week || "Day 1",
       exercise_name: (ex.exerciseName || ex.exercise_name || "").trim(),
+      notes: ex.notes || ex.instructions || null,
+      instructions: ex.instructions || ex.notes || null,
       sets: ex.sets || 3,
-      reps: ex.reps || 10,
+      reps: ex.reps || ex.plannedReps || 10,
+      planned_reps: ex.plannedReps || (typeof ex.reps === "number" ? ex.reps : 10),
+      planned_weight_kg: ex.plannedWeightKg != null ? Number(ex.plannedWeightKg) : null,
+      actual_reps: ex.actualReps != null ? Number(ex.actualReps) : null,
+      actual_weight_kg: ex.actualWeightKg != null ? Number(ex.actualWeightKg) : null,
+      is_completed: Boolean(ex.isCompleted),
       duration_seconds: ex.durationSeconds ?? ex.duration_seconds ?? 0,
       rest_seconds: ex.restSeconds ?? ex.rest_interval_seconds ?? 60,
-      instructions: ex.instructions?.trim() || null,
       video_url: ex.videoUrl?.trim() || null,
       order_index: idx,
     }));
@@ -771,12 +841,22 @@ export async function createWorkoutPlan(params: {
     }
   }
 
+  // If published, alert member
+  if (params.status === "PUBLISHED" && params.customerId) {
+    await createInAppNotification({
+      customerId: params.customerId,
+      title: "New Workout Published",
+      message: `Your coach published a new workout routine: ${params.title.trim()}`,
+      type: "WORKOUT_PUBLISHED",
+    });
+  }
+
   return (plan as any).id;
 }
 
 export async function updateWorkoutPlanStatus(
   planId: string,
-  status: "ACTIVE" | "COMPLETED" | "ARCHIVED"
+  status: WorkoutPlanStatus
 ): Promise<void> {
   const { error } = await ptDb
     .from("workout_plans")
@@ -795,6 +875,8 @@ export async function fetchTrainerWorkoutPlans(trainerId: string): Promise<Worko
       trainer_id,
       title,
       description,
+      workout_date,
+      is_completed,
       start_date,
       end_date,
       status,
@@ -805,8 +887,14 @@ export async function fetchTrainerWorkoutPlans(trainerId: string): Promise<Worko
         workout_plan_id,
         day_of_week,
         exercise_name,
+        notes,
         sets,
         reps,
+        planned_reps,
+        planned_weight_kg,
+        actual_reps,
+        actual_weight_kg,
+        is_completed,
         duration_seconds,
         rest_seconds,
         instructions,
@@ -839,11 +927,15 @@ export async function fetchTrainerWorkoutPlans(trainerId: string): Promise<Worko
       trainerId: p.trainer_id,
       title: p.title,
       description: p.description,
+      workoutDate: p.workout_date || p.start_date,
+      workout_date: p.workout_date || p.start_date,
       startDate: p.start_date,
       start_date: p.start_date,
       endDate: p.end_date,
       end_date: p.end_date,
       status: p.status,
+      isCompleted: Boolean(p.is_completed),
+      is_completed: Boolean(p.is_completed),
       isTemplate: Boolean(p.is_template),
       createdAt: p.created_at,
       exercises: (p.workout_exercises || [])
@@ -851,17 +943,28 @@ export async function fetchTrainerWorkoutPlans(trainerId: string): Promise<Worko
         .map((e: any) => ({
           id: e.id,
           workoutPlanId: e.workout_plan_id,
-          dayOfWeek: e.day_of_week,
-          day_of_week: e.day_of_week,
+          dayOfWeek: e.day_of_week || "Day 1",
+          day_of_week: e.day_of_week || "Day 1",
           exerciseName: e.exercise_name,
           exercise_name: e.exercise_name,
+          notes: e.notes || e.instructions || "",
+          instructions: e.instructions || e.notes || "",
           sets: Number(e.sets) || 3,
           reps: Number(e.reps) || 10,
+          plannedReps: Number(e.planned_reps ?? e.reps ?? 10),
+          planned_reps: Number(e.planned_reps ?? e.reps ?? 10),
+          plannedWeightKg: e.planned_weight_kg != null ? Number(e.planned_weight_kg) : null,
+          planned_weight_kg: e.planned_weight_kg != null ? Number(e.planned_weight_kg) : null,
+          actualReps: e.actual_reps != null ? Number(e.actual_reps) : null,
+          actual_reps: e.actual_reps != null ? Number(e.actual_reps) : null,
+          actualWeightKg: e.actual_weight_kg != null ? Number(e.actual_weight_kg) : null,
+          actual_weight_kg: e.actual_weight_kg != null ? Number(e.actual_weight_kg) : null,
+          isCompleted: Boolean(e.is_completed),
+          is_completed: Boolean(e.is_completed),
           durationSeconds: e.duration_seconds ? Number(e.duration_seconds) : undefined,
           duration_seconds: e.duration_seconds ? Number(e.duration_seconds) : null,
           restSeconds: e.rest_seconds ? Number(e.rest_seconds) : undefined,
           rest_interval_seconds: e.rest_seconds ? Number(e.rest_seconds) : null,
-          instructions: e.instructions || "",
           videoUrl: e.video_url || undefined,
           orderIndex: Number(e.order_index) || 0,
         })),
@@ -882,25 +985,43 @@ export async function updateWorkoutPlan(
   params: {
     title?: string;
     description?: string;
-    status?: "ACTIVE" | "COMPLETED" | "ARCHIVED";
+    workoutDate?: string;
+    isCompleted?: boolean;
+    status?: WorkoutPlanStatus;
     exercises: Array<{
       id?: string;
-      dayOfWeek: string;
+      dayOfWeek?: string;
       exerciseName: string;
-      sets: number;
-      reps: number;
+      notes?: string;
+      sets?: number;
+      reps?: number | string;
+      plannedReps?: number;
+      plannedWeightKg?: number | null;
+      actualReps?: number | null;
+      actualWeightKg?: number | null;
+      isCompleted?: boolean;
       orderIndex?: number;
     }>;
   }
 ): Promise<void> {
-  if (params.title || params.description || params.status) {
-    const updateObj: any = { updated_at: new Date().toISOString() };
-    if (params.title) updateObj.title = params.title.trim();
-    if (params.description !== undefined) updateObj.description = params.description?.trim() || null;
-    if (params.status) updateObj.status = params.status;
-    const { error: planError } = await ptDb.from("workout_plans").update(updateObj).eq("id", planId);
-    if (planError) throw new Error(planError.message);
+  const updateObj: any = { updated_at: new Date().toISOString() };
+  if (params.title) updateObj.title = params.title.trim();
+  if (params.description !== undefined) updateObj.description = params.description?.trim() || null;
+  if (params.workoutDate) {
+    updateObj.workout_date = params.workoutDate;
+    updateObj.start_date = params.workoutDate;
   }
+  if (params.isCompleted !== undefined) updateObj.is_completed = Boolean(params.isCompleted);
+  if (params.status) updateObj.status = params.status;
+
+  const { data: updatedPlan, error: planError } = await ptDb
+    .from("workout_plans")
+    .update(updateObj)
+    .eq("id", planId)
+    .select("customer_id, title, status")
+    .single();
+
+  if (planError) throw new Error(planError.message);
 
   // Replace exercises: delete existing and insert updated
   const { error: delError } = await ptDb.from("workout_exercises").delete().eq("workout_plan_id", planId);
@@ -911,13 +1032,179 @@ export async function updateWorkoutPlan(
       workout_plan_id: planId,
       day_of_week: ex.dayOfWeek || "Day 1",
       exercise_name: ex.exerciseName.trim(),
+      notes: ex.notes?.trim() || null,
+      instructions: ex.notes?.trim() || null,
       sets: Number(ex.sets) || 3,
-      reps: Number(ex.reps) || 10,
+      reps: ex.reps || ex.plannedReps || 10,
+      planned_reps: ex.plannedReps || (typeof ex.reps === "number" ? ex.reps : 10),
+      planned_weight_kg: ex.plannedWeightKg != null ? Number(ex.plannedWeightKg) : null,
+      actual_reps: ex.actualReps != null ? Number(ex.actualReps) : null,
+      actual_weight_kg: ex.actualWeightKg != null ? Number(ex.actualWeightKg) : null,
+      is_completed: Boolean(ex.isCompleted),
       order_index: ex.orderIndex ?? idx,
     }));
     const { error: insError } = await ptDb.from("workout_exercises").insert(exerciseRows);
     if (insError) throw new Error(insError.message);
   }
+
+  // If status is PUBLISHED, send notification to member
+  if (params.status === "PUBLISHED" && updatedPlan?.customer_id) {
+    await createInAppNotification({
+      customerId: updatedPlan.customer_id,
+      title: "Workout Plan Published",
+      message: `Your coach published your workout routine: ${updatedPlan.title || "Workout"}`,
+      type: "WORKOUT_PUBLISHED",
+    });
+  }
+}
+
+export interface DigitalWorkoutExerciseInput {
+  id?: string;
+  exerciseName: string;
+  notes?: string;
+  plannedReps: number;
+  plannedWeightKg?: number | null;
+  actualReps?: number | null;
+  actualWeightKg?: number | null;
+  isCompleted?: boolean;
+}
+
+export interface SaveDigitalWorkoutLogParams {
+  id?: string;
+  customerId: string;
+  trainerId: string;
+  title: string;
+  workoutDate: string;
+  isCompleted: boolean;
+  status: "DRAFT" | "PUBLISHED" | "IN_PROGRESS" | "COMPLETED";
+  exercises: DigitalWorkoutExerciseInput[];
+}
+
+export async function saveDigitalWorkoutLog(
+  params: SaveDigitalWorkoutLogParams
+): Promise<string> {
+  const isPublishing = params.status === "PUBLISHED" || params.status === "COMPLETED";
+  const planData: any = {
+    customer_id: params.customerId,
+    trainer_id: params.trainerId,
+    title: params.title.trim() || "Workout Session",
+    workout_date: params.workoutDate || new Date().toISOString().split("T")[0],
+    start_date: params.workoutDate || new Date().toISOString().split("T")[0],
+    status: params.status,
+    is_completed: Boolean(params.isCompleted),
+    updated_at: new Date().toISOString(),
+  };
+
+  let planId = params.id;
+
+  if (planId) {
+    const { error: updErr } = await ptDb.from("workout_plans").update(planData).eq("id", planId);
+    if (updErr) throw new Error(updErr.message);
+    await ptDb.from("workout_exercises").delete().eq("workout_plan_id", planId);
+  } else {
+    const { data: inserted, error: insErr } = await ptDb
+      .from("workout_plans")
+      .insert(planData)
+      .select("id")
+      .single();
+    if (insErr || !inserted) throw new Error(insErr?.message || "Failed to create workout plan");
+    planId = inserted.id;
+  }
+
+  if (params.exercises.length > 0) {
+    const rows = params.exercises.map((ex, idx) => ({
+      workout_plan_id: planId,
+      day_of_week: "Day 1",
+      exercise_name: ex.exerciseName.trim(),
+      notes: ex.notes?.trim() || null,
+      instructions: ex.notes?.trim() || null,
+      sets: 3,
+      reps: ex.plannedReps || 10,
+      planned_reps: ex.plannedReps || 10,
+      planned_weight_kg: ex.plannedWeightKg != null ? Number(ex.plannedWeightKg) : null,
+      actual_reps: ex.actualReps != null ? Number(ex.actualReps) : null,
+      actual_weight_kg: ex.actualWeightKg != null ? Number(ex.actualWeightKg) : null,
+      is_completed: Boolean(ex.isCompleted),
+      order_index: idx,
+    }));
+
+    const { error: exErr } = await ptDb.from("workout_exercises").insert(rows);
+    if (exErr) throw new Error(exErr.message);
+  }
+
+  if (isPublishing && params.customerId) {
+    await createInAppNotification({
+      customerId: params.customerId,
+      title: "New Workout Log Published",
+      message: `Your coach published your workout session for ${params.workoutDate}: ${params.title.trim()}`,
+      type: "WORKOUT_PUBLISHED",
+    });
+  }
+
+  return planId;
+}
+
+export async function createInAppNotification(params: {
+  customerId?: string | null;
+  userId?: string | null;
+  title: string;
+  message: string;
+  type?: string;
+  link?: string | null;
+}): Promise<void> {
+  try {
+    let targetUserId = params.userId;
+    if (!targetUserId && params.customerId) {
+      const { data: cust } = await (supabase as any)
+        .from("customers")
+        .select("user_id")
+        .eq("id", params.customerId)
+        .maybeSingle();
+      if (cust && (cust as any).user_id) targetUserId = (cust as any).user_id;
+    }
+
+    await (supabase as any).from("in_app_notifications").insert({
+      customer_id: params.customerId || null,
+      user_id: targetUserId || null,
+      title: params.title.trim(),
+      message: params.message.trim(),
+      type: params.type || "WORKOUT_PUBLISHED",
+      link: params.link || null,
+    });
+  } catch (err) {
+    console.warn("Failed to create in-app notification:", err);
+  }
+}
+
+export async function fetchInAppNotifications(customerId: string): Promise<InAppNotification[]> {
+  try {
+    const { data, error } = await (supabase as any)
+      .from("in_app_notifications")
+      .select("*")
+      .eq("customer_id", customerId)
+      .order("created_at", { ascending: false })
+      .limit(20);
+
+    if (error) throw error;
+    return (data || []).map((n: any) => ({
+      id: n.id,
+      userId: n.user_id,
+      customerId: n.customer_id,
+      title: n.title,
+      message: n.message,
+      type: n.type,
+      link: n.link,
+      isRead: Boolean(n.is_read),
+      createdAt: n.created_at,
+    }));
+  } catch (err) {
+    console.error("fetchInAppNotifications error:", err);
+    return [];
+  }
+}
+
+export async function markNotificationAsRead(id: string): Promise<void> {
+  await (supabase as any).from("in_app_notifications").update({ is_read: true }).eq("id", id);
 }
 
 export async function distributeWorkoutPlan(params: {
@@ -2233,28 +2520,43 @@ export async function fetchCustomerMyTrainerBundle(
         trainerId: wp.trainer_id,
         title: wp.title,
         description: wp.description,
+        workoutDate: wp.workout_date || wp.start_date,
+        workout_date: wp.workout_date || wp.start_date,
         startDate: wp.start_date,
         start_date: wp.start_date,
         endDate: wp.end_date,
         end_date: wp.end_date,
         status: wp.status,
+        isCompleted: Boolean(wp.is_completed),
+        is_completed: Boolean(wp.is_completed),
         isTemplate: false,
         createdAt: wp.created_at,
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         exercises: (wp.exercises || []).map((ex: any) => ({
           id: ex.id,
           workoutPlanId: wp.id,
-          dayOfWeek: ex.day_of_week,
-          day_of_week: ex.day_of_week,
+          dayOfWeek: ex.day_of_week || "Day 1",
+          day_of_week: ex.day_of_week || "Day 1",
           exerciseName: ex.exercise_name,
           exercise_name: ex.exercise_name,
+          notes: ex.notes || ex.instructions || "",
+          instructions: ex.instructions || ex.notes || "",
           sets: Number(ex.sets) || 3,
           reps: ex.reps || 10,
+          plannedReps: Number(ex.planned_reps ?? ex.reps ?? 10),
+          planned_reps: Number(ex.planned_reps ?? ex.reps ?? 10),
+          plannedWeightKg: ex.planned_weight_kg != null ? Number(ex.planned_weight_kg) : null,
+          planned_weight_kg: ex.planned_weight_kg != null ? Number(ex.planned_weight_kg) : null,
+          actualReps: ex.actual_reps != null ? Number(ex.actual_reps) : null,
+          actual_reps: ex.actual_reps != null ? Number(ex.actual_reps) : null,
+          actualWeightKg: ex.actual_weight_kg != null ? Number(ex.actual_weight_kg) : null,
+          actual_weight_kg: ex.actual_weight_kg != null ? Number(ex.actual_weight_kg) : null,
+          isCompleted: Boolean(ex.is_completed),
+          is_completed: Boolean(ex.is_completed),
           durationSeconds: ex.duration_seconds ? Number(ex.duration_seconds) : undefined,
           duration_seconds: ex.duration_seconds ? Number(ex.duration_seconds) : null,
           restSeconds: ex.rest_seconds ? Number(ex.rest_seconds) : undefined,
           rest_interval_seconds: ex.rest_seconds ? Number(ex.rest_seconds) : null,
-          instructions: ex.instructions || "",
           videoUrl: ex.video_url || undefined,
           orderIndex: Number(ex.order_index) || 0,
         })),

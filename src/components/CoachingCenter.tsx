@@ -17,6 +17,7 @@ import {
   ArrowClockwise,
   UploadSimple,
   Sparkle,
+  CheckCircle,
 } from "@phosphor-icons/react";
 import { toast } from "sonner";
 import {
@@ -24,6 +25,8 @@ import {
   fetchTrainerWorkoutPlans,
   deleteWorkoutPlan,
   updateWorkoutPlan,
+  updateWorkoutPlanStatus,
+  saveDigitalWorkoutLog,
   distributeWorkoutPlan,
   fetchMemberMealPlans,
   fetchTrainerMealPlans,
@@ -280,6 +283,17 @@ export default function CoachingCenter({
       setWorkoutPlans(prev => prev.filter(p => p.id !== plan.id));
     } catch (err: unknown) {
       toast.error((err as Error)?.message || "Failed to delete workout plan.");
+    }
+  };
+
+  // Workout Plan Quick Publish
+  const handlePublishWorkout = async (plan: WorkoutPlanWithExercises) => {
+    try {
+      await updateWorkoutPlanStatus(plan.id, "PUBLISHED");
+      toast.success(`Workout "${plan.title}" published! Member will see this routine in their portal.`);
+      setWorkoutPlans(prev => prev.map(p => p.id === plan.id ? { ...p, status: "PUBLISHED" } : p));
+    } catch (err: unknown) {
+      toast.error((err as Error)?.message || "Failed to publish workout.");
     }
   };
 
@@ -716,17 +730,17 @@ export default function CoachingCenter({
             </div>
           )}
 
-          {/* SECTION 2: WORKOUT PLANS */}
+          {/* SECTION 2: WORKOUT PLANS (DIGITAL WORKOUT LOG) */}
           {section === "workouts" && (
             <div className="space-y-4">
               <div className={`${CARD} flex flex-col sm:flex-row sm:items-center justify-between gap-3`}>
                 <div>
                   <h3 className="text-base font-bold text-white flex items-center gap-2">
                     <Barbell weight="fill" className="w-5 h-5 text-lime-400" />
-                    Workout Plans
+                    Digital Workout Logs
                   </h3>
                   <p className="text-xs text-zinc-400">
-                    Simplified workout structure: Workout Name, Workout Day, Sets, and Repetitions.
+                    Replicate gym paper log: Date, Exercise, Notes, Planned vs Actual Reps & Weight, Complete Workout Yes/No.
                   </p>
                 </div>
 
@@ -735,106 +749,180 @@ export default function CoachingCenter({
                     setEditingWorkoutPlan(null);
                     setShowWorkoutModal(true);
                   }}
-                  className="bg-lime-400 hover:bg-lime-300 text-zinc-950 font-bold px-3.5 py-1.5 rounded-xl text-xs flex items-center gap-1.5 transition-colors self-start sm:self-auto"
+                  className="bg-lime-400 hover:bg-lime-300 text-zinc-950 font-bold px-3.5 py-2 rounded-xl text-xs flex items-center gap-1.5 transition-colors self-start sm:self-auto shadow-sm shadow-lime-400/20"
                 >
                   <Plus weight="bold" className="w-3.5 h-3.5" />
-                  Create Workout Plan
+                  Create Workout Log
                 </button>
               </div>
 
               {workoutPlans.length === 0 ? (
                 <div className={`${CARD} py-14 text-center text-zinc-500`}>
                   <Barbell className="w-12 h-12 mx-auto text-zinc-700 mb-2" />
-                  <p className="text-sm font-semibold text-zinc-400">No workout plans created yet</p>
+                  <p className="text-sm font-semibold text-zinc-400">No workout logs recorded yet</p>
                   <p className="text-xs text-zinc-500 mt-1">
-                    Click &quot;Create Workout Plan&quot; to assign custom routines to your member(s).
+                    Click &quot;Create Workout Log&quot; to draft or publish digital session logs for your members.
                   </p>
                 </div>
               ) : (
                 <div className="space-y-4">
-                  {workoutPlans.map(plan => (
-                    <div
-                      key={plan.id}
-                      className="bg-zinc-900 border border-zinc-800 rounded-2xl p-5 space-y-4 hover:border-zinc-750 transition-colors"
-                    >
-                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-zinc-800 pb-3">
-                        <div>
-                          <div className="flex items-center gap-2">
-                            <h4 className="font-bold text-white text-base">{plan.title}</h4>
-                            <span
-                              className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                                plan.status === "ACTIVE"
-                                  ? "bg-lime-400/20 text-lime-400 border border-lime-400/30"
-                                  : "bg-zinc-800 text-zinc-400"
-                              }`}
-                            >
-                              {plan.status}
-                            </span>
+                  {workoutPlans.map(plan => {
+                    const workoutDateStr = plan.workoutDate || plan.startDate || plan.createdAt;
+                    const formattedDate = new Date(workoutDateStr).toLocaleDateString("en-US", {
+                      month: "short",
+                      day: "numeric",
+                      year: "numeric",
+                    });
+
+                    return (
+                      <div
+                        key={plan.id}
+                        className="bg-zinc-900 border border-zinc-800 rounded-2xl p-5 space-y-4 hover:border-zinc-750 transition-colors shadow-sm"
+                      >
+                        {/* Workout Header Info */}
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-zinc-800 pb-3">
+                          <div>
+                            <div className="flex flex-wrap items-center gap-2 mb-1">
+                              <h4 className="font-bold text-white text-base">{plan.title}</h4>
+
+                              {/* Status Badges */}
+                              {plan.status === "DRAFT" ? (
+                                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-amber-400/15 text-amber-300 border border-amber-400/30">
+                                  Draft (Hidden from Member)
+                                </span>
+                              ) : plan.status === "PUBLISHED" || plan.status === "ACTIVE" ? (
+                                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-lime-400/20 text-lime-400 border border-lime-400/30">
+                                  Published
+                                </span>
+                              ) : plan.status === "IN_PROGRESS" ? (
+                                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-blue-400/20 text-blue-300 border border-blue-400/30">
+                                  In Progress
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-emerald-400/20 text-emerald-300 border border-emerald-400/30">
+                                  Completed
+                                </span>
+                              )}
+
+                              {/* Complete Workout? Yes/No Badge */}
+                              <span
+                                className={`px-2 py-0.5 rounded-md text-[10px] font-bold ${
+                                  plan.isCompleted
+                                    ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/30"
+                                    : "bg-zinc-800 text-zinc-400 border border-zinc-700/60"
+                                }`}
+                              >
+                                Complete Workout: {plan.isCompleted ? "Yes" : "No"}
+                              </span>
+                            </div>
+
+                            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-zinc-400">
+                              <span className="text-zinc-300 font-medium">
+                                Date: <strong className="text-white font-mono">{formattedDate}</strong>
+                              </span>
+                              {plan.customerName && (
+                                <span className="text-lime-400 font-medium">
+                                  Member: <strong>{plan.customerName}</strong> {plan.customerCode ? `(${plan.customerCode})` : ""}
+                                </span>
+                              )}
+                            </div>
+                            {plan.description && (
+                              <p className="text-xs text-zinc-400 mt-1">{plan.description}</p>
+                            )}
                           </div>
-                          {plan.customerName && (
-                            <p className="text-xs text-lime-400 font-medium mt-0.5">
-                              Recipient: {plan.customerName} {plan.customerCode ? `(${plan.customerCode})` : ""}
-                            </p>
-                          )}
-                          {plan.description && (
-                            <p className="text-xs text-zinc-400 mt-0.5">{plan.description}</p>
-                          )}
+
+                          {/* Quick Actions */}
+                          <div className="flex items-center gap-2 self-start sm:self-auto">
+                            {plan.status === "DRAFT" && (
+                              <button
+                                onClick={() => handlePublishWorkout(plan)}
+                                className="px-3 py-1.5 bg-lime-400 hover:bg-lime-300 text-zinc-950 font-bold rounded-xl text-xs transition-colors shadow-sm"
+                                title="Publish to member and send alert"
+                              >
+                                Publish Workout
+                              </button>
+                            )}
+                            <button
+                              onClick={() => {
+                                setEditingWorkoutPlan(plan);
+                                setShowWorkoutModal(true);
+                              }}
+                              className="px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 font-semibold rounded-xl text-xs flex items-center gap-1.5 transition-colors border border-zinc-700"
+                              title="Edit Log / Record Actuals"
+                            >
+                              <PencilSimple weight="bold" className="w-3.5 h-3.5" />
+                              <span>Edit / Log</span>
+                            </button>
+                            <button
+                              onClick={() => handleDeleteWorkoutPlan(plan)}
+                              className="p-1.5 text-red-400 hover:text-red-300 rounded-xl hover:bg-zinc-800 transition-colors"
+                              title="Delete Plan"
+                            >
+                              <Trash weight="bold" className="w-4 h-4" />
+                            </button>
+                          </div>
                         </div>
 
-                        <div className="flex items-center gap-2 self-end sm:self-auto">
-                          <button
-                            onClick={() => {
-                              setEditingWorkoutPlan(plan);
-                              setShowWorkoutModal(true);
-                            }}
-                            className="p-1.5 text-zinc-400 hover:text-white rounded-lg hover:bg-zinc-800 transition-colors"
-                            title="Edit Plan"
-                          >
-                            <PencilSimple weight="bold" className="w-4 h-4" />
-                          </button>
-                          <button
-                            onClick={() => handleDeleteWorkoutPlan(plan)}
-                            className="p-1.5 text-red-400 hover:text-red-300 rounded-lg hover:bg-zinc-800 transition-colors"
-                            title="Delete Plan"
-                          >
-                            <Trash weight="bold" className="w-4 h-4" />
-                          </button>
-                        </div>
-                      </div>
-
-                      {/* 4-Field Simplified Workout Routine Table */}
-                      <div className="overflow-x-auto">
-                        <table className="w-full text-left text-xs border-collapse">
-                          <thead>
-                            <tr className="border-b border-zinc-800 text-[10px] uppercase text-zinc-400 tracking-wider">
-                              <th className="pb-2 pl-2">Workout Name</th>
-                              <th className="pb-2">Workout Day</th>
-                              <th className="pb-2">Sets</th>
-                              <th className="pb-2 pr-2">Repetitions</th>
-                            </tr>
-                          </thead>
-                          <tbody className="divide-y divide-zinc-800/40">
-                            {plan.exercises.map((ex, i) => (
-                              <tr key={ex.id || i} className="hover:bg-zinc-800/20">
-                                <td className="py-2.5 pl-2 font-semibold text-white">
-                                  {ex.exerciseName || ex.exercise_name}
-                                </td>
-                                <td className="py-2.5 text-lime-400 font-medium">
-                                  {ex.dayOfWeek || ex.day_of_week || "Day 1"}
-                                </td>
-                                <td className="py-2.5 text-zinc-300 font-mono font-bold">
-                                  {ex.sets}
-                                </td>
-                                <td className="py-2.5 pr-2 text-zinc-300 font-mono font-bold">
-                                  {ex.reps}
-                                </td>
+                        {/* Digital Gym Paper Log Table */}
+                        <div className="overflow-x-auto rounded-xl border border-zinc-800/80 bg-zinc-950/60">
+                          <table className="w-full text-left text-xs border-collapse">
+                            <thead>
+                              <tr className="border-b border-zinc-800 text-[10px] uppercase text-zinc-400 tracking-wider bg-zinc-900/80 font-bold">
+                                <th className="py-2.5 pl-3">Exercise</th>
+                                <th className="py-2.5 px-2">Notes</th>
+                                <th className="py-2.5 px-2 text-center text-cyan-400">Planned Reps</th>
+                                <th className="py-2.5 px-2 text-center text-cyan-400">Planned Wt (KG)</th>
+                                <th className="py-2.5 px-2 text-center text-lime-400">Actual Reps</th>
+                                <th className="py-2.5 px-2 text-center text-lime-400">Actual Wt (KG)</th>
+                                <th className="py-2.5 pr-3 text-center">Done?</th>
                               </tr>
-                            ))}
-                          </tbody>
-                        </table>
+                            </thead>
+                            <tbody className="divide-y divide-zinc-800/50">
+                              {plan.exercises.map((ex, i) => (
+                                <tr key={ex.id || i} className="hover:bg-zinc-850/40">
+                                  <td className="py-2.5 pl-3 font-bold text-white whitespace-nowrap">
+                                    {ex.exerciseName || ex.exercise_name}
+                                  </td>
+                                  <td className="py-2.5 px-2 text-zinc-400 text-xs italic max-w-xs truncate">
+                                    {ex.notes || ex.instructions || "—"}
+                                  </td>
+                                  <td className="py-2.5 px-2 text-center font-mono font-bold text-zinc-200 bg-cyan-400/5">
+                                    {ex.plannedReps ?? ex.planned_reps ?? ex.reps ?? "—"}
+                                  </td>
+                                  <td className="py-2.5 px-2 text-center font-mono font-bold text-zinc-200 bg-cyan-400/5">
+                                    {ex.plannedWeightKg != null
+                                      ? `${ex.plannedWeightKg} kg`
+                                      : ex.planned_weight_kg != null
+                                      ? `${ex.planned_weight_kg} kg`
+                                      : "—"}
+                                  </td>
+                                  <td className="py-2.5 px-2 text-center font-mono font-bold text-lime-300 bg-lime-400/5">
+                                    {ex.actualReps != null ? ex.actualReps : ex.actual_reps != null ? ex.actual_reps : "—"}
+                                  </td>
+                                  <td className="py-2.5 px-2 text-center font-mono font-bold text-lime-300 bg-lime-400/5">
+                                    {ex.actualWeightKg != null
+                                      ? `${ex.actualWeightKg} kg`
+                                      : ex.actual_weight_kg != null
+                                      ? `${ex.actual_weight_kg} kg`
+                                      : "—"}
+                                  </td>
+                                  <td className="py-2.5 pr-3 text-center">
+                                    {ex.isCompleted || ex.is_completed ? (
+                                      <span className="inline-flex items-center gap-1 text-[11px] font-bold text-lime-400">
+                                        <CheckCircle weight="fill" className="w-3.5 h-3.5 text-lime-400" /> Yes
+                                      </span>
+                                    ) : (
+                                      <span className="text-[11px] text-zinc-500 font-medium">No</span>
+                                    )}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </div>
@@ -1512,8 +1600,19 @@ function VideoUploadModal({
 }
 
 // ==============================================================================
-// 2. SIMPLIFIED WORKOUT PLAN MODAL (4 Fields: Name, Day, Sets, Repetitions)
+// 2. DIGITAL WORKOUT LOG MODAL (Replicating Gym Paper Log)
 // ==============================================================================
+interface WorkoutLogEntryState {
+  id?: string;
+  exerciseName: string;
+  notes: string;
+  plannedReps: number;
+  plannedWeightKg: number | string;
+  actualReps: number | string;
+  actualWeightKg: number | string;
+  isCompleted: boolean;
+}
+
 function WorkoutPlanModal({
   trainerId,
   assignedMembers,
@@ -1531,7 +1630,11 @@ function WorkoutPlanModal({
   onClose: () => void;
   onSaved: () => void;
 }) {
-  const [title, setTitle] = useState(planToEdit?.title || "Custom Workout Plan");
+  const [title, setTitle] = useState(planToEdit?.title || "Workout Session");
+  const [workoutDate, setWorkoutDate] = useState<string>(
+    planToEdit?.workoutDate || planToEdit?.startDate || new Date().toISOString().split("T")[0]
+  );
+  const [isCompleted, setIsCompleted] = useState<boolean>(Boolean(planToEdit?.isCompleted));
   const [targetScope, setTargetScope] = useState<"individual" | "all">(
     planToEdit ? "individual" : initialScope
   );
@@ -1539,28 +1642,57 @@ function WorkoutPlanModal({
     planToEdit?.customerId || initialCustomerId || (assignedMembers.length > 0 ? assignedMembers[0].customer_id : "")
   );
 
-  // 4 Fields per entry: workoutName, workoutDay, sets, reps
-  const [entries, setEntries] = useState<
-    Array<{
-      id?: string;
-      workoutName: string;
-      workoutDay: string;
-      sets: number;
-      reps: number;
-    }>
-  >(
+  const [entries, setEntries] = useState<WorkoutLogEntryState[]>(
     planToEdit?.exercises && planToEdit.exercises.length > 0
       ? planToEdit.exercises.map(e => ({
           id: e.id,
-          workoutName: e.exerciseName || e.exercise_name || "",
-          workoutDay: e.dayOfWeek || e.day_of_week || "Monday",
-          sets: Number(e.sets) || 3,
-          reps: Number(e.reps) || 10,
+          exerciseName: e.exerciseName || e.exercise_name || "",
+          notes: e.notes || e.instructions || "",
+          plannedReps: Number(e.plannedReps ?? e.planned_reps ?? e.reps ?? 10),
+          plannedWeightKg:
+            e.plannedWeightKg != null
+              ? e.plannedWeightKg
+              : e.planned_weight_kg != null
+              ? e.planned_weight_kg
+              : "",
+          actualReps:
+            e.actualReps != null ? e.actualReps : e.actual_reps != null ? e.actual_reps : "",
+          actualWeightKg:
+            e.actualWeightKg != null
+              ? e.actualWeightKg
+              : e.actual_weight_kg != null
+              ? e.actual_weight_kg
+              : "",
+          isCompleted: Boolean(e.isCompleted ?? e.is_completed),
         }))
       : [
-          { workoutName: "Barbell Bench Press", workoutDay: "Monday", sets: 4, reps: 12 },
-          { workoutName: "Squats", workoutDay: "Wednesday", sets: 3, reps: 15 },
-          { workoutName: "Shoulder Press", workoutDay: "Friday", sets: 3, reps: 12 },
+          {
+            exerciseName: "Barbell Bench Press",
+            notes: "Warm up 2 sets, pause at bottom",
+            plannedReps: 10,
+            plannedWeightKg: 60,
+            actualReps: "",
+            actualWeightKg: "",
+            isCompleted: false,
+          },
+          {
+            exerciseName: "Incline Dumbbell Press",
+            notes: "Focus on upper chest contraction",
+            plannedReps: 12,
+            plannedWeightKg: 24,
+            actualReps: "",
+            actualWeightKg: "",
+            isCompleted: false,
+          },
+          {
+            exerciseName: "Tricep Pushdowns",
+            notes: "Keep elbows strictly pinned to sides",
+            plannedReps: 15,
+            plannedWeightKg: 25,
+            actualReps: "",
+            actualWeightKg: "",
+            isCompleted: false,
+          },
         ]
   );
 
@@ -1570,10 +1702,13 @@ function WorkoutPlanModal({
     setTitle(tpl.name);
     setEntries(
       tpl.entries.map(e => ({
-        workoutName: e.exerciseName,
-        workoutDay: e.dayOfWeek,
-        sets: e.sets,
-        reps: e.reps,
+        exerciseName: e.exerciseName,
+        notes: `Focus on form for ${e.exerciseName}`,
+        plannedReps: e.reps,
+        plannedWeightKg: "",
+        actualReps: "",
+        actualWeightKg: "",
+        isCompleted: false,
       }))
     );
     toast.success(`Template "${tpl.name}" loaded!`);
@@ -1582,7 +1717,15 @@ function WorkoutPlanModal({
   const handleAddEntry = () => {
     setEntries(prev => [
       ...prev,
-      { workoutName: "", workoutDay: "Monday", sets: 3, reps: 10 },
+      {
+        exerciseName: "",
+        notes: "",
+        plannedReps: 10,
+        plannedWeightKg: "",
+        actualReps: "",
+        actualWeightKg: "",
+        isCompleted: false,
+      },
     ]);
   };
 
@@ -1590,36 +1733,52 @@ function WorkoutPlanModal({
     setEntries(prev => prev.filter((_, i) => i !== idx));
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSaveWithStatus = async (
+    targetStatus: "DRAFT" | "PUBLISHED" | "IN_PROGRESS" | "COMPLETED"
+  ) => {
     if (!title.trim()) {
-      toast.error("Please enter a plan title.");
+      toast.error("Please enter a workout title / focus.");
       return;
     }
-    const validEntries = entries.filter(e => e.workoutName.trim());
+    const validEntries = entries.filter(e => e.exerciseName.trim());
     if (validEntries.length === 0) {
-      toast.error("Please provide at least one workout entry.");
+      toast.error("Please provide at least one exercise entry.");
       return;
     }
 
     setIsSubmitting(true);
     try {
+      const formattedExercises = validEntries.map(e => ({
+        id: e.id,
+        exerciseName: e.exerciseName.trim(),
+        notes: e.notes.trim() || undefined,
+        plannedReps: Number(e.plannedReps) || 10,
+        plannedWeightKg: e.plannedWeightKg !== "" && !isNaN(Number(e.plannedWeightKg)) ? Number(e.plannedWeightKg) : null,
+        actualReps: e.actualReps !== "" && !isNaN(Number(e.actualReps)) ? Number(e.actualReps) : null,
+        actualWeightKg: e.actualWeightKg !== "" && !isNaN(Number(e.actualWeightKg)) ? Number(e.actualWeightKg) : null,
+        isCompleted: Boolean(e.isCompleted),
+      }));
+
       if (planToEdit) {
-        // Edit existing plan
-        await updateWorkoutPlan(planToEdit.id, {
+        await saveDigitalWorkoutLog({
+          id: planToEdit.id,
+          customerId: planToEdit.customerId || targetCustomerId,
+          trainerId,
           title: title.trim(),
-          exercises: validEntries.map((e, idx) => ({
-            id: e.id,
-            exerciseName: e.workoutName.trim(),
-            dayOfWeek: e.workoutDay.trim() || "Day 1",
-            sets: Number(e.sets) || 3,
-            reps: Number(e.reps) || 10,
-            orderIndex: idx,
-          })),
+          workoutDate: workoutDate || new Date().toISOString().split("T")[0],
+          isCompleted,
+          status: targetStatus,
+          exercises: formattedExercises,
         });
-        toast.success("Workout plan updated successfully!");
+
+        toast.success(
+          targetStatus === "DRAFT"
+            ? "Workout log saved as Draft (hidden from member)."
+            : targetStatus === "PUBLISHED"
+            ? "Workout log published! Member notified."
+            : "Workout log updated successfully!"
+        );
       } else {
-        // New plan distribution
         let customerIds: string[] = [];
         if (targetScope === "individual") {
           if (!targetCustomerId) {
@@ -1632,72 +1791,76 @@ function WorkoutPlanModal({
         }
 
         if (targetScope === "all" && customerIds.length > 0) {
-          const ok = confirm(`Publish this workout plan to all ${customerIds.length} assigned members?`);
+          const ok = confirm(`Publish this workout log to all ${customerIds.length} assigned members?`);
           if (!ok) return;
         }
 
-        const res = await distributeWorkoutPlan({
-          trainerId,
-          customerIds,
-          title: title.trim(),
-          exercises: validEntries.map(e => ({
-            exerciseName: e.workoutName.trim(),
-            dayOfWeek: e.workoutDay.trim() || "Day 1",
-            sets: Number(e.sets) || 3,
-            reps: Number(e.reps) || 10,
-          })),
-        });
-
-        if (res.failed.length > 0) {
-          toast.warning(
-            `Assigned to ${res.successful.length} members, ${res.failed.length} failed.`
-          );
-        } else {
-          toast.success(
-            targetScope === "all"
-              ? `Workout plan distributed to all ${res.successful.length} members!`
-              : "Workout plan created and assigned to member!"
-          );
+        for (const cId of customerIds) {
+          await saveDigitalWorkoutLog({
+            customerId: cId,
+            trainerId,
+            title: title.trim(),
+            workoutDate: workoutDate || new Date().toISOString().split("T")[0],
+            isCompleted,
+            status: targetStatus,
+            exercises: formattedExercises,
+          });
         }
+
+        toast.success(
+          targetStatus === "DRAFT"
+            ? "Workout log drafted! Hidden from member until published."
+            : targetScope === "all"
+            ? `Workout log published to all ${customerIds.length} members!`
+            : "Workout log published and member notified!"
+        );
       }
 
       onSaved();
     } catch (err: unknown) {
-      toast.error((err as Error)?.message || "Failed to save workout plan.");
+      toast.error((err as Error)?.message || "Failed to save workout log.");
     } finally {
       setIsSubmitting(false);
     }
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 backdrop-blur-sm p-4 overflow-y-auto">
-      <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6 w-full max-w-2xl max-h-[90vh] flex flex-col space-y-4">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 backdrop-blur-sm p-3 sm:p-4 overflow-y-auto">
+      <div className="bg-zinc-900 border border-zinc-800 rounded-3xl p-5 sm:p-6 w-full max-w-4xl max-h-[92vh] flex flex-col space-y-4 shadow-2xl">
+        {/* Header */}
         <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
-          <div className="flex items-center gap-2">
-            <Barbell weight="fill" className="w-5 h-5 text-lime-400" />
-            <h4 className="font-bold text-white text-base">
-              {planToEdit ? "Edit Workout Plan" : "Create Workout Plan"}
-            </h4>
+          <div className="flex items-center gap-2.5">
+            <div className="w-9 h-9 rounded-xl bg-lime-400/10 border border-lime-400/20 flex items-center justify-center text-lime-400">
+              <Barbell weight="fill" className="w-5 h-5" />
+            </div>
+            <div>
+              <h4 className="font-black text-white text-base">
+                {planToEdit ? "Edit Digital Workout Log" : "New Digital Workout Log"}
+              </h4>
+              <p className="text-[11px] text-zinc-400">
+                Gym paper log format: Date, Exercise, Notes, Planned vs Actual, Complete Status.
+              </p>
+            </div>
           </div>
           <button onClick={onClose} className="p-1.5 text-zinc-400 hover:text-white rounded-lg">
             <X weight="bold" className="w-5 h-5" />
           </button>
         </div>
 
-        {/* Quick Templates (only when creating) */}
+        {/* Quick Templates Bar */}
         {!planToEdit && (
-          <div className="bg-zinc-800/40 border border-zinc-800 rounded-xl p-3 flex items-center justify-between gap-3">
+          <div className="bg-zinc-950/60 border border-zinc-800/80 rounded-2xl p-2.5 flex items-center justify-between gap-3">
             <span className="text-xs text-zinc-300 font-semibold flex items-center gap-1.5 shrink-0">
               <Sparkle weight="bold" className="w-3.5 h-3.5 text-lime-400" />
-              Quick Templates:
+              Quick Routine Templates:
             </span>
-            <div className="flex gap-1.5 overflow-x-auto">
+            <div className="flex gap-1.5 overflow-x-auto scrollbar-none">
               {WORKOUT_TEMPLATES.map(tpl => (
                 <button
                   key={tpl.name}
                   type="button"
                   onClick={() => handleApplyTemplate(tpl)}
-                  className="px-2.5 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-lime-400 text-[11px] font-semibold border border-zinc-700 transition-colors whitespace-nowrap"
+                  className="px-2.5 py-1 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-lime-400 text-[11px] font-semibold border border-zinc-700 transition-colors whitespace-nowrap"
                 >
                   {tpl.name}
                 </button>
@@ -1706,11 +1869,11 @@ function WorkoutPlanModal({
           </div>
         )}
 
-        <form onSubmit={handleSubmit} className="space-y-4 overflow-y-auto flex-1 pr-1">
-          {/* Target Recipient Selector (only when creating) */}
+        <div className="space-y-4 overflow-y-auto flex-1 pr-1">
+          {/* Recipient Member Selection */}
           {!planToEdit && (
             <div>
-              <label className={LABEL}>Distribution Recipient *</label>
+              <label className={LABEL}>Assigned Member *</label>
               <div className="grid grid-cols-2 gap-2 mb-2">
                 <button
                   type="button"
@@ -1746,121 +1909,208 @@ function WorkoutPlanModal({
                   required
                 >
                   {assignedMembers.map(m => (
-                    <option key={m.id} value={m.customer_id}>
-                      {m.customer_name} ({m.customer_code})
+                    <option key={m.customer_id} value={m.customer_id}>
+                      {m.customer_name} ({m.customer_code || "Member"})
                     </option>
                   ))}
                 </select>
               ) : (
-                <p className="text-[11px] text-zinc-400 p-2.5 rounded-xl bg-zinc-950 border border-zinc-800">
-                  Will assign this workout plan to all <strong>{assignedMembers.length} members</strong> under your supervision.
+                <p className="text-xs text-lime-400 bg-lime-400/10 border border-lime-400/20 p-2.5 rounded-xl font-medium">
+                  Will assign this workout log to all <strong>{assignedMembers.length} members</strong> under your supervision.
                 </p>
               )}
             </div>
           )}
 
-          <div>
-            <label className={LABEL}>Plan Name *</label>
-            <input
-              type="text"
-              required
-              placeholder="e.g. 3-Day Strength & Hypertrophy Split"
-              value={title}
-              onChange={e => setTitle(e.target.value)}
-              className={INPUT}
-            />
+          {/* Session Overview: Date, Title, Complete Workout? Yes/No, Status */}
+          <div className="grid grid-cols-1 sm:grid-cols-12 gap-3 p-3.5 bg-zinc-950/70 border border-zinc-800 rounded-2xl">
+            <div className="sm:col-span-5">
+              <label className={LABEL}>Workout Title / Focus *</label>
+              <input
+                type="text"
+                required
+                placeholder="e.g. Chest & Triceps Hypertrophy"
+                value={title}
+                onChange={e => setTitle(e.target.value)}
+                className={INPUT}
+              />
+            </div>
+
+            <div className="sm:col-span-3">
+              <label className={LABEL}>Workout Date *</label>
+              <input
+                type="date"
+                required
+                value={workoutDate}
+                onChange={e => setWorkoutDate(e.target.value)}
+                className={INPUT}
+              />
+            </div>
+
+            <div className="sm:col-span-4">
+              <label className={LABEL}>Complete Workout? (Yes/No)</label>
+              <button
+                type="button"
+                onClick={() => setIsCompleted(!isCompleted)}
+                className={`w-full py-2 px-3 rounded-xl text-xs font-bold border transition-colors flex items-center justify-center gap-2 ${
+                  isCompleted
+                    ? "bg-emerald-500/20 text-emerald-300 border-emerald-500/40"
+                    : "bg-zinc-800 text-zinc-400 border-zinc-700"
+                }`}
+              >
+                <CheckCircle weight={isCompleted ? "fill" : "regular"} className="w-4 h-4" />
+                <span>Complete Workout: {isCompleted ? "Yes" : "No"}</span>
+              </button>
+            </div>
           </div>
 
-          {/* 4 FIELDS ONLY: Workout Name, Workout Day, Sets, Repetitions */}
+          {/* Digital Paper Log Entries Table */}
           <div className="space-y-2">
             <div className="flex items-center justify-between">
-              <label className={LABEL}>
-                Workout Entries ({entries.length}) &mdash; Name, Day, Sets, Reps
-              </label>
+              <div>
+                <label className={LABEL}>
+                  Exercise Paper Log ({entries.length} Exercises)
+                </label>
+                <span className="text-[11px] text-zinc-500 block">
+                  Planned and actual values are saved in separate columns to preserve training prescription vs execution.
+                </span>
+              </div>
               <button
                 type="button"
                 onClick={handleAddEntry}
                 className="text-xs text-lime-400 hover:underline font-bold"
               >
-                + Add Workout Entry
+                + Add Exercise Row
               </button>
             </div>
 
-            <div className="space-y-2">
+            <div className="space-y-2.5">
               {entries.map((entry, idx) => (
                 <div
                   key={idx}
-                  className="p-3 bg-zinc-800/40 border border-zinc-800 rounded-xl grid grid-cols-12 gap-2 items-center"
+                  className="p-3 bg-zinc-950/80 border border-zinc-800 rounded-2xl grid grid-cols-1 sm:grid-cols-12 gap-2.5 items-center"
                 >
-                  <div className="col-span-12 sm:col-span-5">
-                    <label className="text-[10px] text-zinc-500 font-semibold block sm:hidden">Workout Name</label>
-                    <input
-                      type="text"
-                      required
-                      placeholder="Workout Name (e.g. Bench Press)"
-                      value={entry.workoutName}
-                      onChange={e => {
-                        const val = e.target.value;
-                        setEntries(prev => prev.map((it, i) => (i === idx ? { ...it, workoutName: val } : it)));
-                      }}
-                      className={INPUT}
-                    />
+                  {/* Exercise Name & Notes */}
+                  <div className="sm:col-span-4 space-y-1.5">
+                    <div>
+                      <span className="text-[10px] text-zinc-500 font-bold uppercase">Exercise</span>
+                      <input
+                        type="text"
+                        required
+                        placeholder="Exercise (e.g. Bench Press)"
+                        value={entry.exerciseName}
+                        onChange={e => {
+                          const val = e.target.value;
+                          setEntries(prev => prev.map((it, i) => (i === idx ? { ...it, exerciseName: val } : it)));
+                        }}
+                        className={INPUT}
+                      />
+                    </div>
+                    <div>
+                      <span className="text-[10px] text-zinc-500 font-bold uppercase">Notes / Cues</span>
+                      <input
+                        type="text"
+                        placeholder="Notes (e.g. 3s eccentric, pause)"
+                        value={entry.notes}
+                        onChange={e => {
+                          const val = e.target.value;
+                          setEntries(prev => prev.map((it, i) => (i === idx ? { ...it, notes: val } : it)));
+                        }}
+                        className={INPUT}
+                      />
+                    </div>
                   </div>
 
-                  <div className="col-span-4 sm:col-span-3">
-                    <label className="text-[10px] text-zinc-500 font-semibold block sm:hidden">Day</label>
-                    <input
-                      type="text"
-                      required
-                      placeholder="Day (e.g. Monday)"
-                      value={entry.workoutDay}
-                      onChange={e => {
-                        const val = e.target.value;
-                        setEntries(prev => prev.map((it, i) => (i === idx ? { ...it, workoutDay: val } : it)));
-                      }}
-                      className={INPUT}
-                    />
+                  {/* Planned Reps & Weight */}
+                  <div className="sm:col-span-3 grid grid-cols-2 gap-1.5 p-2 bg-cyan-400/5 border border-cyan-400/15 rounded-xl">
+                    <div>
+                      <span className="text-[10px] text-cyan-400 font-bold uppercase block">Plan Reps</span>
+                      <input
+                        type="number"
+                        min="1"
+                        required
+                        placeholder="10"
+                        value={entry.plannedReps}
+                        onChange={e => {
+                          const val = Number(e.target.value);
+                          setEntries(prev => prev.map((it, i) => (i === idx ? { ...it, plannedReps: val } : it)));
+                        }}
+                        className={INPUT}
+                      />
+                    </div>
+                    <div>
+                      <span className="text-[10px] text-cyan-400 font-bold uppercase block">Plan KG</span>
+                      <input
+                        type="number"
+                        step="0.5"
+                        placeholder="KG"
+                        value={entry.plannedWeightKg}
+                        onChange={e => {
+                          const val = e.target.value;
+                          setEntries(prev => prev.map((it, i) => (i === idx ? { ...it, plannedWeightKg: val } : it)));
+                        }}
+                        className={INPUT}
+                      />
+                    </div>
                   </div>
 
-                  <div className="col-span-3 sm:col-span-1.5">
-                    <label className="text-[10px] text-zinc-500 font-semibold block sm:hidden">Sets</label>
-                    <input
-                      type="number"
-                      min="1"
-                      required
-                      placeholder="Sets"
-                      value={entry.sets}
-                      onChange={e => {
-                        const val = Number(e.target.value);
-                        setEntries(prev => prev.map((it, i) => (i === idx ? { ...it, sets: val } : it)));
-                      }}
-                      className={INPUT}
-                    />
+                  {/* Actual Reps & Weight */}
+                  <div className="sm:col-span-3 grid grid-cols-2 gap-1.5 p-2 bg-lime-400/5 border border-lime-400/15 rounded-xl">
+                    <div>
+                      <span className="text-[10px] text-lime-400 font-bold uppercase block">Act. Reps</span>
+                      <input
+                        type="number"
+                        min="0"
+                        placeholder="Actual"
+                        value={entry.actualReps}
+                        onChange={e => {
+                          const val = e.target.value;
+                          setEntries(prev => prev.map((it, i) => (i === idx ? { ...it, actualReps: val } : it)));
+                        }}
+                        className={INPUT}
+                      />
+                    </div>
+                    <div>
+                      <span className="text-[10px] text-lime-400 font-bold uppercase block">Act. KG</span>
+                      <input
+                        type="number"
+                        step="0.5"
+                        placeholder="KG"
+                        value={entry.actualWeightKg}
+                        onChange={e => {
+                          const val = e.target.value;
+                          setEntries(prev => prev.map((it, i) => (i === idx ? { ...it, actualWeightKg: val } : it)));
+                        }}
+                        className={INPUT}
+                      />
+                    </div>
                   </div>
 
-                  <div className="col-span-3 sm:col-span-1.5">
-                    <label className="text-[10px] text-zinc-500 font-semibold block sm:hidden">Reps</label>
-                    <input
-                      type="number"
-                      min="1"
-                      required
-                      placeholder="Reps"
-                      value={entry.reps}
-                      onChange={e => {
-                        const val = Number(e.target.value);
-                        setEntries(prev => prev.map((it, i) => (i === idx ? { ...it, reps: val } : it)));
+                  {/* Done & Remove */}
+                  <div className="sm:col-span-2 flex items-center justify-between sm:justify-end gap-2 pt-1 sm:pt-0">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEntries(prev =>
+                          prev.map((it, i) => (i === idx ? { ...it, isCompleted: !it.isCompleted } : it))
+                        );
                       }}
-                      className={INPUT}
-                    />
-                  </div>
+                      className={`px-2.5 py-1.5 rounded-xl text-[11px] font-bold border transition-colors flex items-center gap-1 ${
+                        entry.isCompleted
+                          ? "bg-lime-400/20 text-lime-400 border-lime-400/30"
+                          : "bg-zinc-800 text-zinc-400 border-zinc-700"
+                      }`}
+                    >
+                      <CheckCircle weight={entry.isCompleted ? "fill" : "regular"} className="w-3.5 h-3.5" />
+                      <span>{entry.isCompleted ? "Done" : "Pending"}</span>
+                    </button>
 
-                  <div className="col-span-2 sm:col-span-1 text-right">
                     <button
                       type="button"
                       onClick={() => handleRemoveEntry(idx)}
                       disabled={entries.length <= 1}
-                      className="p-1.5 text-zinc-500 hover:text-red-400 disabled:opacity-30 rounded"
-                      title="Remove entry"
+                      className="p-1.5 text-zinc-500 hover:text-red-400 disabled:opacity-30 rounded-lg"
+                      title="Remove exercise"
                     >
                       <Trash weight="bold" className="w-4 h-4" />
                     </button>
@@ -1869,34 +2119,74 @@ function WorkoutPlanModal({
               ))}
             </div>
           </div>
+        </div>
 
-          <div className="pt-2 flex gap-2 border-t border-zinc-800">
+        {/* Modal Actions */}
+        <div className="pt-3 flex flex-wrap items-center justify-between gap-2 border-t border-zinc-800">
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={isSubmitting}
+            className="px-4 py-2.5 bg-zinc-800 hover:bg-zinc-700 text-white font-semibold rounded-xl text-xs transition-colors"
+          >
+            Cancel
+          </button>
+
+          <div className="flex flex-wrap items-center gap-2">
+            {/* Save as Draft Button */}
             <button
               type="button"
-              onClick={onClose}
+              onClick={() => handleSaveWithStatus("DRAFT")}
               disabled={isSubmitting}
-              className="flex-1 bg-zinc-800 hover:bg-zinc-700 text-white font-semibold py-2.5 rounded-xl text-xs transition-colors"
+              className="px-4 py-2.5 bg-amber-400/15 hover:bg-amber-400/25 text-amber-300 font-bold border border-amber-400/30 rounded-xl text-xs transition-colors flex items-center gap-1.5 shadow-sm"
+              title="Save as Draft (hidden from member)"
             >
-              Cancel
+              Save as Draft
             </button>
+
+            {/* In Progress option if editing */}
+            {planToEdit && (
+              <button
+                type="button"
+                onClick={() => handleSaveWithStatus("IN_PROGRESS")}
+                disabled={isSubmitting}
+                className="px-4 py-2.5 bg-blue-500/20 hover:bg-blue-500/30 text-blue-300 font-bold border border-blue-500/30 rounded-xl text-xs transition-colors"
+              >
+                In Progress
+              </button>
+            )}
+
+            {/* Complete option if editing */}
+            {planToEdit && (
+              <button
+                type="button"
+                onClick={() => {
+                  setIsCompleted(true);
+                  handleSaveWithStatus("COMPLETED");
+                }}
+                disabled={isSubmitting}
+                className="px-4 py-2.5 bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 font-bold border border-emerald-500/30 rounded-xl text-xs transition-colors"
+              >
+                Mark Completed
+              </button>
+            )}
+
+            {/* Publish Button */}
             <button
-              type="submit"
+              type="button"
+              onClick={() => handleSaveWithStatus("PUBLISHED")}
               disabled={isSubmitting}
-              className="flex-1 bg-lime-400 hover:bg-lime-300 text-zinc-950 font-bold py-2.5 rounded-xl text-xs transition-colors flex items-center justify-center gap-1.5"
+              className="px-5 py-2.5 bg-lime-400 hover:bg-lime-300 text-zinc-950 font-bold rounded-xl text-xs transition-colors flex items-center gap-1.5 shadow-md shadow-lime-400/20"
             >
               {isSubmitting ? (
                 <div className="w-3.5 h-3.5 border-2 border-zinc-950/20 border-t-zinc-950 rounded-full animate-spin" />
               ) : (
                 <Check weight="bold" className="w-4 h-4" />
               )}
-              {planToEdit
-                ? "Save Changes"
-                : targetScope === "all"
-                ? `Distribute to All (${assignedMembers.length})`
-                : "Assign Workout Plan"}
+              <span>{planToEdit?.status === "PUBLISHED" ? "Save & Update Member" : "Publish Workout"}</span>
             </button>
           </div>
-        </form>
+        </div>
       </div>
     </div>
   );

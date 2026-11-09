@@ -26,6 +26,7 @@ import {
   searchCustomersForSteam,
   fetchActiveSteamService,
   fetchSteamSummaryStats,
+  getEATPeriodRange,
   fetchSteamServicesList,
   registerSteamService,
   authorizeSteamAccess,
@@ -54,12 +55,22 @@ export default function SteamManagement({
   const roleStr = (state.currentUser?.role || "").toLowerCase();
   const isUserAdmin = isAdmin ?? (roleStr === "owner" || roleStr === "admin");
   const [activeTab, setActiveTab] = useState<TabKey>(isUserAdmin ? "pricing" : "new");
+
+  // Steam Statistics Filter State (Today, This Week, This Month, This Year, Custom)
+  type StatsPeriod = "TODAY" | "THIS_WEEK" | "THIS_MONTH" | "THIS_YEAR" | "CUSTOM";
+  const [statsPeriod, setStatsPeriod] = useState<StatsPeriod>("TODAY");
+  const [customStatsStart, setCustomStatsStart] = useState<string>("");
+  const [customStatsEnd, setCustomStatsEnd] = useState<string>("");
+  const [statsLoading, setStatsLoading] = useState<boolean>(false);
+
   const [stats, setStats] = useState<SteamSummaryStats>({
+    services_count: 0,
     today_services: 0,
     pending_payments: 0,
     approved_payments: 0,
     in_progress_services: 0,
     completed_services: 0,
+    revenue: 0,
     today_revenue: 0,
   });
   const [records, setRecords] = useState<SteamServiceRecord[]>([]);
@@ -97,11 +108,30 @@ export default function SteamManagement({
   const [viewingProofTitle, setViewingProofTitle] = useState<string>("");
   const [loadingProof, setLoadingProof] = useState<boolean>(false);
 
+  // Load stats specifically for selected period
+  const loadPeriodStats = useCallback(async (
+    period: StatsPeriod = statsPeriod,
+    customStart?: string,
+    customEnd?: string
+  ) => {
+    try {
+      setStatsLoading(true);
+      const { startUtc, endUtc } = getEATPeriodRange(period, customStart, customEnd);
+      const nextStats = await fetchSteamSummaryStats(startUtc, endUtc);
+      setStats(nextStats);
+    } catch (err) {
+      console.error("SteamManagement loadPeriodStats error:", err);
+    } finally {
+      setStatsLoading(false);
+    }
+  }, [statsPeriod]);
+
   // Load summary stats, active offering, and records
   const loadData = useCallback(async () => {
     try {
+      const { startUtc, endUtc } = getEATPeriodRange(statsPeriod, customStatsStart, customStatsEnd);
       const [nextStats, currentOffering, list] = await Promise.all([
-        fetchSteamSummaryStats(),
+        fetchSteamSummaryStats(startUtc, endUtc),
         fetchActiveSteamService(),
         fetchSteamServicesList("ALL"),
       ]);
@@ -121,11 +151,27 @@ export default function SteamManagement({
       setLoading(false);
       setRefreshing(false);
     }
-  }, []);
+  }, [statsPeriod, customStatsStart, customStatsEnd]);
 
   useEffect(() => {
     void loadData();
   }, [loadData]);
+
+  // Re-fetch stats when statsPeriod changes
+  const handlePeriodChange = (nextPeriod: StatsPeriod) => {
+    setStatsPeriod(nextPeriod);
+    if (nextPeriod !== "CUSTOM") {
+      void loadPeriodStats(nextPeriod);
+    }
+  };
+
+  const handleApplyCustomDates = () => {
+    if (!customStatsStart || !customStatsEnd) {
+      toast.error("Please select both a start date and an end date.");
+      return;
+    }
+    void loadPeriodStats("CUSTOM", customStatsStart, customStatsEnd);
+  };
 
   // Debounced Customer Search
   useEffect(() => {
@@ -382,18 +428,125 @@ export default function SteamManagement({
         </div>
       )}
 
-      {/* SUMMARY STATS (Today's Services & Today's Revenue) */}
-      <section className="grid grid-cols-1 min-[420px]:grid-cols-2 gap-3">
-        <div className="rounded-2xl border border-zinc-800 bg-zinc-900/90 p-4 shadow-sm">
-          <div className="text-[11px] font-bold uppercase tracking-wider text-zinc-400">Today's Services</div>
-          <div className="mt-2 text-2xl font-black text-white">{stats.today_services}</div>
-          <div className="mt-1 text-xs text-zinc-500">Registered today</div>
+      {/* SUMMARY STATS & PERIOD FILTERING */}
+      <section className="space-y-3">
+        {/* Period Filter Bar */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 bg-zinc-900/60 border border-zinc-800 rounded-2xl p-2.5">
+          <div className="flex items-center gap-1 overflow-x-auto pb-1 sm:pb-0 scrollbar-none">
+            {(
+              [
+                { id: "TODAY", label: "Today" },
+                { id: "THIS_WEEK", label: "This Week" },
+                { id: "THIS_MONTH", label: "This Month" },
+                { id: "THIS_YEAR", label: "This Year" },
+                { id: "CUSTOM", label: "Custom Range" },
+              ] as const
+            ).map((p) => (
+              <button
+                key={p.id}
+                type="button"
+                onClick={() => handlePeriodChange(p.id)}
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all ${
+                  statsPeriod === p.id
+                    ? "bg-cyan-400 text-zinc-950 shadow-sm shadow-cyan-400/20"
+                    : "text-zinc-400 hover:text-white hover:bg-zinc-800"
+                }`}
+              >
+                {p.label}
+              </button>
+            ))}
+          </div>
+
+          {statsPeriod === "CUSTOM" && (
+            <div className="flex flex-wrap items-center gap-2 pt-2 sm:pt-0 border-t sm:border-t-0 border-zinc-800">
+              <input
+                type="date"
+                value={customStatsStart}
+                onChange={(e) => setCustomStatsStart(e.target.value)}
+                className="bg-zinc-950 border border-zinc-700 text-white text-xs rounded-xl px-2.5 py-1.5 focus:border-cyan-400 focus:outline-none"
+                placeholder="Start Date"
+                title="Start Date"
+              />
+              <span className="text-zinc-500 text-xs font-bold">to</span>
+              <input
+                type="date"
+                value={customStatsEnd}
+                onChange={(e) => setCustomStatsEnd(e.target.value)}
+                className="bg-zinc-950 border border-zinc-700 text-white text-xs rounded-xl px-2.5 py-1.5 focus:border-cyan-400 focus:outline-none"
+                placeholder="End Date"
+                title="End Date"
+              />
+              <button
+                type="button"
+                onClick={handleApplyCustomDates}
+                disabled={statsLoading}
+                className="px-3 py-1.5 bg-lime-400 hover:bg-lime-300 text-zinc-950 font-bold text-xs rounded-xl transition-colors shadow-sm disabled:opacity-50"
+              >
+                Apply
+              </button>
+            </div>
+          )}
         </div>
 
-        <div className="rounded-2xl border border-lime-500/30 bg-lime-500/5 p-4 shadow-sm">
-          <div className="text-[11px] font-bold uppercase tracking-wider text-lime-400">Today's Revenue</div>
-          <div className="mt-2 text-2xl font-black text-lime-300">{formatETB(stats.today_revenue)}</div>
-          <div className="mt-1 text-xs text-zinc-500">Total received</div>
+        {/* Dynamic Cards (Services & Revenue) */}
+        <div className="grid grid-cols-1 min-[420px]:grid-cols-2 gap-3">
+          <div className="rounded-2xl border border-zinc-800 bg-zinc-900/90 p-4 shadow-sm relative overflow-hidden">
+            {statsLoading && (
+              <div className="absolute inset-0 bg-zinc-900/60 backdrop-blur-xs flex items-center justify-center">
+                <div className="w-5 h-5 border-2 border-cyan-400 border-t-transparent rounded-full animate-spin" />
+              </div>
+            )}
+            <div className="text-[11px] font-bold uppercase tracking-wider text-zinc-400">
+              {statsPeriod === "TODAY"
+                ? "Today's Services"
+                : statsPeriod === "THIS_WEEK"
+                ? "Services This Week"
+                : statsPeriod === "THIS_MONTH"
+                ? "Services This Month"
+                : statsPeriod === "THIS_YEAR"
+                ? "Services This Year"
+                : "Services (Custom Range)"}
+            </div>
+            <div className="mt-2 text-2xl font-black text-white">
+              {stats.services_count ?? stats.today_services}
+            </div>
+            <div className="mt-1 text-xs text-zinc-500">
+              {statsPeriod === "TODAY"
+                ? "Registered today"
+                : statsPeriod === "THIS_WEEK"
+                ? "Registered this week"
+                : statsPeriod === "THIS_MONTH"
+                ? "Registered this month"
+                : statsPeriod === "THIS_YEAR"
+                ? "Registered this year"
+                : "Registered in custom range"}
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-lime-500/30 bg-lime-500/5 p-4 shadow-sm relative overflow-hidden">
+            {statsLoading && (
+              <div className="absolute inset-0 bg-zinc-900/60 backdrop-blur-xs flex items-center justify-center">
+                <div className="w-5 h-5 border-2 border-lime-400 border-t-transparent rounded-full animate-spin" />
+              </div>
+            )}
+            <div className="text-[11px] font-bold uppercase tracking-wider text-lime-400">
+              {statsPeriod === "TODAY"
+                ? "Today's Revenue"
+                : statsPeriod === "THIS_WEEK"
+                ? "Revenue This Week"
+                : statsPeriod === "THIS_MONTH"
+                ? "Revenue This Month"
+                : statsPeriod === "THIS_YEAR"
+                ? "Revenue This Year"
+                : "Revenue (Custom Range)"}
+            </div>
+            <div className="mt-2 text-2xl font-black text-lime-300">
+              {formatETB(stats.revenue ?? stats.today_revenue)}
+            </div>
+            <div className="mt-1 text-xs text-zinc-500">
+              Approved payments (excl. cancelled)
+            </div>
+          </div>
         </div>
       </section>
 

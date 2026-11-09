@@ -28,7 +28,7 @@ export default function ContactMessagesView() {
   const [messages, setMessages] = useState<ContactMessage[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [statusFilter, setStatusFilter] = useState<"ALL" | "NEW" | "READ" | "RESOLVED">("ALL");
+  const [statusFilter, setStatusFilter] = useState<"UNRESOLVED" | "RESOLVED" | "ALL">("UNRESOLVED");
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedMessage, setSelectedMessage] = useState<ContactMessage | null>(null);
   const [updatingId, setUpdatingId] = useState<string | null>(null);
@@ -56,7 +56,7 @@ export default function ContactMessagesView() {
     toast.success("Messages refreshed.");
   };
 
-  const handleStatusChange = async (msg: ContactMessage, newStatus: "NEW" | "READ" | "RESOLVED") => {
+  const handleStatusChange = async (msg: ContactMessage, newStatus: "NEW" | "RESOLVED") => {
     setUpdatingId(msg.id);
     try {
       await updateContactMessageStatus(msg.id, newStatus);
@@ -66,7 +66,7 @@ export default function ContactMessagesView() {
       if (selectedMessage?.id === msg.id) {
         setSelectedMessage((prev) => (prev ? { ...prev, status: newStatus } : null));
       }
-      toast.success(`Message marked as ${newStatus.toLowerCase()}.`);
+      toast.success(newStatus === "RESOLVED" ? "Message marked as resolved." : "Inquiry reopened.");
     } catch (err: unknown) {
       toast.error((err as Error)?.message || "Failed to update status.");
     } finally {
@@ -88,8 +88,10 @@ export default function ContactMessagesView() {
 
   const filteredMessages = useMemo(() => {
     let list = messages;
-    if (statusFilter !== "ALL") {
-      list = list.filter((m) => m.status === statusFilter);
+    if (statusFilter === "UNRESOLVED") {
+      list = list.filter((m) => m.status !== "RESOLVED");
+    } else if (statusFilter === "RESOLVED") {
+      list = list.filter((m) => m.status === "RESOLVED");
     }
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase().trim();
@@ -106,35 +108,26 @@ export default function ContactMessagesView() {
   const counts = useMemo(() => {
     return {
       all: messages.length,
-      new: messages.filter((m) => m.status === "NEW").length,
-      read: messages.filter((m) => m.status === "READ").length,
+      unresolved: messages.filter((m) => m.status !== "RESOLVED").length,
       resolved: messages.filter((m) => m.status === "RESOLVED").length,
     };
   }, [messages]);
 
   const renderStatusBadge = (status: ContactMessage["status"]) => {
-    switch (status) {
-      case "NEW":
-        return (
-          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-amber-400/20 text-amber-300 border border-amber-400/30">
-            <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
-            New
-          </span>
-        );
-      case "READ":
-        return (
-          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-blue-400/20 text-blue-300 border border-blue-400/30">
-            Read
-          </span>
-        );
-      case "RESOLVED":
-        return (
-          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-lime-400/20 text-lime-400 border border-lime-400/30">
-            <CheckCircle weight="fill" className="w-3 h-3 text-lime-400" />
-            Resolved
-          </span>
-        );
+    if (status === "RESOLVED") {
+      return (
+        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-lime-400/20 text-lime-400 border border-lime-400/30">
+          <CheckCircle weight="fill" className="w-3 h-3 text-lime-400" />
+          Resolved
+        </span>
+      );
     }
+    return (
+      <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-amber-400/20 text-amber-300 border border-amber-400/30">
+        <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
+        Unresolved
+      </span>
+    );
   };
 
   return (
@@ -185,15 +178,14 @@ export default function ContactMessagesView() {
           {/* Filter Pills */}
           <div className="flex flex-wrap items-center gap-1.5">
             {[
-              { key: "ALL", label: "All", count: counts.all },
-              { key: "NEW", label: "New", count: counts.new },
-              { key: "READ", label: "Read", count: counts.read },
+              { key: "UNRESOLVED", label: "Unresolved", count: counts.unresolved },
               { key: "RESOLVED", label: "Resolved", count: counts.resolved },
+              { key: "ALL", label: "All Messages", count: counts.all },
             ].map((f) => (
               <button
                 key={f.key}
                 type="button"
-                onClick={() => setStatusFilter(f.key as "ALL" | ContactMessageStatus)}
+                onClick={() => setStatusFilter(f.key as "UNRESOLVED" | "RESOLVED" | "ALL")}
                 className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 ${
                   statusFilter === f.key
                     ? "bg-lime-400 text-zinc-950 shadow-sm"
@@ -276,7 +268,7 @@ export default function ContactMessagesView() {
                   </button>
 
                   <div className="flex items-center gap-1.5">
-                    {msg.status !== "RESOLVED" && (
+                    {msg.status !== "RESOLVED" ? (
                       <button
                         onClick={() => handleStatusChange(msg, "RESOLVED")}
                         disabled={updatingId === msg.id}
@@ -285,15 +277,14 @@ export default function ContactMessagesView() {
                       >
                         Resolve
                       </button>
-                    )}
-                    {msg.status === "NEW" && (
+                    ) : (
                       <button
-                        onClick={() => handleStatusChange(msg, "READ")}
+                        onClick={() => handleStatusChange(msg, "NEW")}
                         disabled={updatingId === msg.id}
-                        className="px-2.5 py-1.5 rounded-xl bg-blue-400/15 text-blue-400 hover:bg-blue-400/25 border border-blue-400/30 text-xs font-bold"
-                        title="Mark as read"
+                        className="px-2.5 py-1.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-400 text-xs font-medium"
+                        title="Re-open inquiry"
                       >
-                        Read
+                        Re-open
                       </button>
                     )}
                   </div>
@@ -357,25 +348,23 @@ export default function ContactMessagesView() {
                             <Eye className="w-4 h-4" />
                           </button>
 
-                          {msg.status === "NEW" && (
-                            <button
-                              onClick={() => handleStatusChange(msg, "READ")}
-                              disabled={updatingId === msg.id}
-                              className="px-2 py-1 rounded-lg bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 border border-blue-500/30 text-xs font-semibold transition-colors"
-                              title="Mark Read"
-                            >
-                              Mark Read
-                            </button>
-                          )}
-
-                          {msg.status !== "RESOLVED" && (
+                          {msg.status !== "RESOLVED" ? (
                             <button
                               onClick={() => handleStatusChange(msg, "RESOLVED")}
                               disabled={updatingId === msg.id}
-                              className="px-2 py-1 rounded-lg bg-lime-400/10 hover:bg-lime-400/20 text-lime-400 border border-lime-400/30 text-xs font-semibold transition-colors"
+                              className="px-2.5 py-1 rounded-lg bg-lime-400/10 hover:bg-lime-400/20 text-lime-400 border border-lime-400/30 text-xs font-semibold transition-colors"
                               title="Mark Resolved"
                             >
                               Resolve
+                            </button>
+                          ) : (
+                            <button
+                              onClick={() => handleStatusChange(msg, "NEW")}
+                              disabled={updatingId === msg.id}
+                              className="px-2 py-1 rounded-lg bg-zinc-800 hover:bg-zinc-750 text-zinc-400 text-xs font-medium transition-colors"
+                              title="Re-open Inquiry"
+                            >
+                              Re-open
                             </button>
                           )}
 
@@ -470,25 +459,16 @@ export default function ContactMessagesView() {
               {/* Status Actions */}
               <div className="pt-2 border-t border-zinc-800 flex flex-wrap items-center justify-between gap-2">
                 <div className="flex items-center gap-2">
-                  {selectedMessage.status !== "RESOLVED" && (
+                  {selectedMessage.status !== "RESOLVED" ? (
                     <button
                       onClick={() => handleStatusChange(selectedMessage, "RESOLVED")}
                       className="px-4 py-2 rounded-xl bg-lime-400 text-zinc-950 font-bold text-xs hover:bg-lime-300 transition-colors"
                     >
                       Mark as Resolved
                     </button>
-                  )}
-                  {selectedMessage.status === "NEW" && (
+                  ) : (
                     <button
-                      onClick={() => handleStatusChange(selectedMessage, "READ")}
-                      className="px-4 py-2 rounded-xl bg-blue-500/20 text-blue-400 hover:bg-blue-500/30 border border-blue-500/30 font-bold text-xs transition-colors"
-                    >
-                      Mark as Read
-                    </button>
-                  )}
-                  {selectedMessage.status === "RESOLVED" && (
-                    <button
-                      onClick={() => handleStatusChange(selectedMessage, "READ")}
+                      onClick={() => handleStatusChange(selectedMessage, "NEW")}
                       className="px-4 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-bold text-xs transition-colors"
                     >
                       Re-open Inquiry

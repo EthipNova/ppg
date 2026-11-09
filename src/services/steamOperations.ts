@@ -50,11 +50,13 @@ export interface SteamServiceRecord {
 }
 
 export interface SteamSummaryStats {
+  services_count: number;
   today_services: number;
   pending_payments: number;
   approved_payments: number;
   in_progress_services?: number;
   completed_services: number;
+  revenue: number;
   today_revenue: number;
 }
 
@@ -375,10 +377,63 @@ export async function completeSteamService(serviceId: string): Promise<void> {
 }
 
 /**
+ * Computes exact start and end timestamps in UTC corresponding to Ethiopian local time (EAT, UTC+3).
+ */
+export function getEATPeriodRange(
+  period: "TODAY" | "THIS_WEEK" | "THIS_MONTH" | "THIS_YEAR" | "CUSTOM",
+  customStart?: string,
+  customEnd?: string
+): { startUtc: string; endUtc: string } {
+  const eatOffsetMs = 3 * 60 * 60 * 1000;
+  const now = new Date();
+  const eatNow = new Date(now.getTime() + eatOffsetMs);
+
+  const year = eatNow.getUTCFullYear();
+  const month = eatNow.getUTCMonth();
+  const date = eatNow.getUTCDate();
+  const dayOfWeek = (eatNow.getUTCDay() + 6) % 7; // Monday = 0, Sunday = 6
+
+  let startEat: Date;
+  let endEat: Date;
+
+  if (period === "TODAY") {
+    startEat = new Date(Date.UTC(year, month, date, 0, 0, 0, 0));
+    endEat = new Date(Date.UTC(year, month, date, 23, 59, 59, 999));
+  } else if (period === "THIS_WEEK") {
+    startEat = new Date(Date.UTC(year, month, date - dayOfWeek, 0, 0, 0, 0));
+    endEat = new Date(Date.UTC(year, month, date - dayOfWeek + 6, 23, 59, 59, 999));
+  } else if (period === "THIS_MONTH") {
+    startEat = new Date(Date.UTC(year, month, 1, 0, 0, 0, 0));
+    const lastDay = new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
+    endEat = new Date(Date.UTC(year, month, lastDay, 23, 59, 59, 999));
+  } else if (period === "THIS_YEAR") {
+    startEat = new Date(Date.UTC(year, 0, 1, 0, 0, 0, 0));
+    endEat = new Date(Date.UTC(year, 11, 31, 23, 59, 59, 999));
+  } else {
+    const [sy, sm, sd] = (customStart || "2020-01-01").split("-").map(Number);
+    const [ey, em, ed] = (customEnd || "2030-12-31").split("-").map(Number);
+    startEat = new Date(Date.UTC(sy, sm - 1, sd, 0, 0, 0, 0));
+    endEat = new Date(Date.UTC(ey, em - 1, ed, 23, 59, 59, 999));
+  }
+
+  const startUtc = new Date(startEat.getTime() - eatOffsetMs).toISOString();
+  const endUtc = new Date(endEat.getTime() - eatOffsetMs).toISOString();
+
+  return { startUtc, endUtc };
+}
+
+/**
  * Fetches summary statistics for the Reception & Admin dashboard cards.
  */
-export async function fetchSteamSummaryStats(): Promise<SteamSummaryStats> {
-  const { data, error } = await steamDb.rpc("get_steam_summary_stats");
+export async function fetchSteamSummaryStats(
+  startDate?: string,
+  endDate?: string
+): Promise<SteamSummaryStats> {
+  const rpcParams: { p_start_date?: string; p_end_date?: string } = {};
+  if (startDate) rpcParams.p_start_date = startDate;
+  if (endDate) rpcParams.p_end_date = endDate;
+
+  const { data, error } = await steamDb.rpc("get_steam_summary_stats", rpcParams);
 
   if (error) {
     console.error("fetchSteamSummaryStats error:", error);
@@ -386,21 +441,28 @@ export async function fetchSteamSummaryStats(): Promise<SteamSummaryStats> {
   }
 
   const raw = data as {
+    services_count?: number;
     today_services?: number;
     pending_payments?: number;
     approved_payments?: number;
     in_progress_services?: number;
     completed_services?: number;
+    revenue?: number;
     today_revenue?: number;
   };
 
+  const count = Number(raw?.services_count ?? raw?.today_services ?? 0);
+  const rev = Number(raw?.revenue ?? raw?.today_revenue ?? 0);
+
   return {
-    today_services: Number(raw?.today_services || 0),
+    services_count: count,
+    today_services: count,
     pending_payments: Number(raw?.pending_payments || 0),
-    approved_payments: Number(raw?.approved_payments || 0),
+    approved_payments: Number(raw?.approved_payments || count),
     in_progress_services: Number(raw?.in_progress_services || 0),
     completed_services: Number(raw?.completed_services || 0),
-    today_revenue: Number(raw?.today_revenue || 0),
+    revenue: rev,
+    today_revenue: rev,
   };
 }
 

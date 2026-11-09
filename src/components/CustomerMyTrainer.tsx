@@ -14,10 +14,15 @@ import {
   Flame,
   ChatCircleText,
   Target,
+  CheckCircle,
+  Sparkle,
 } from "@phosphor-icons/react";
 import {
   fetchCustomerMyTrainerBundle,
   getExerciseVideoSignedUrl,
+  fetchInAppNotifications,
+  markNotificationAsRead,
+  type InAppNotification,
   type CustomerActiveTrainerInfo,
   type CustomerMyTrainerBundle,
 } from "../services/personalTrainerService";
@@ -40,6 +45,7 @@ export default function CustomerMyTrainer({
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [bundle, setBundle] = useState<CustomerMyTrainerBundle | null>(null);
+  const [notifications, setNotifications] = useState<InAppNotification[]>([]);
   const [videoSignedUrls, setVideoSignedUrls] = useState<Record<string, string>>({});
   const [activeVideoModal, setActiveVideoModal] = useState<{
     url: string;
@@ -53,8 +59,12 @@ export default function CustomerMyTrainer({
     else setLoading(true);
 
     try {
-      const data = await fetchCustomerMyTrainerBundle(customerId);
+      const [data, notifs] = await Promise.all([
+        fetchCustomerMyTrainerBundle(customerId),
+        fetchInAppNotifications(customerId),
+      ]);
       setBundle(data);
+      setNotifications(notifs);
 
       if (onTrainerStatusChange) {
         onTrainerStatusChange(data.hasActiveTrainer);
@@ -372,7 +382,7 @@ export default function CustomerMyTrainer({
         </div>
       )}
 
-      {/* SECTION: WORKOUT PLANS */}
+      {/* SECTION: WORKOUT PLANS (DIGITAL WORKOUT LOG) */}
       {activeSection === "workouts" && (
         <div className="space-y-6">
           <div className="flex items-center justify-between">
@@ -381,13 +391,37 @@ export default function CustomerMyTrainer({
                 Assigned Workout Routines
               </h3>
               <p className="text-xs text-zinc-400">
-                Customized exercises, sets, repetitions, and rest intervals designed for your goals.
+                Digital workout log prescribed by your coach: Planned vs Actual reps and weights.
               </p>
             </div>
             <span className="text-xs font-bold text-lime-400 bg-lime-400/10 border border-lime-400/20 px-3 py-1 rounded-full">
-              {workoutPlans.length} {workoutPlans.length === 1 ? "Plan" : "Plans"}
+              {workoutPlans.length} {workoutPlans.length === 1 ? "Session Log" : "Session Logs"}
             </span>
           </div>
+
+          {/* In-app Notification Alert Banner */}
+          {notifications.some(n => !n.isRead && n.type === "WORKOUT_PUBLISHED") && (
+            <div className="p-4 rounded-2xl bg-lime-400/10 border border-lime-400/30 flex items-center justify-between gap-3 text-xs text-lime-300">
+              <div className="flex items-center gap-2.5">
+                <Sparkle weight="fill" className="w-5 h-5 text-lime-400 shrink-0" />
+                <span className="font-medium">
+                  {notifications.find(n => !n.isRead && n.type === "WORKOUT_PUBLISHED")?.message ||
+                    "Your coach published a new workout routine!"}
+                </span>
+              </div>
+              <button
+                onClick={async () => {
+                  const unread = notifications.filter(n => !n.isRead && n.type === "WORKOUT_PUBLISHED");
+                  for (const u of unread) await markNotificationAsRead(u.id);
+                  setNotifications(prev => prev.map(n => ({ ...n, isRead: true })));
+                  toast.success("Notification dismissed.");
+                }}
+                className="px-3 py-1.5 bg-lime-400 text-zinc-950 font-bold rounded-xl text-xs shrink-0 hover:bg-lime-300 transition-colors shadow-sm"
+              >
+                Dismiss
+              </button>
+            </div>
+          )}
 
           {workoutPlans.length === 0 ? (
             <div className="bg-zinc-900 border border-zinc-800 rounded-3xl p-10 text-center">
@@ -399,111 +433,153 @@ export default function CustomerMyTrainer({
             </div>
           ) : (
             <div className="space-y-6">
-              {workoutPlans.map((plan) => (
-                <div
-                  key={plan.id}
-                  className="bg-zinc-900 border border-zinc-800 rounded-3xl p-6 shadow-xl space-y-4"
-                >
-                  <div className="flex flex-col md:flex-row md:items-center justify-between gap-2 border-b border-zinc-800 pb-4">
-                    <div>
-                      <div className="flex items-center gap-2 mb-1">
-                        <h4 className="text-xl font-black text-white uppercase tracking-tight">
-                          {plan.title}
-                        </h4>
-                        <span
-                          className={`px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase ${
-                            plan.status === "ACTIVE"
-                              ? "bg-lime-400 text-zinc-950"
-                              : "bg-zinc-800 text-zinc-400"
-                          }`}
-                        >
-                          {plan.status}
-                        </span>
-                      </div>
-                      {plan.description && (
-                        <p className="text-xs text-zinc-400">{plan.description}</p>
-                      )}
-                    </div>
+              {workoutPlans.map((plan) => {
+                const workoutDateStr = plan.workoutDate || plan.startDate || plan.createdAt;
+                const formattedDate = new Date(workoutDateStr).toLocaleDateString("en-US", {
+                  month: "short",
+                  day: "numeric",
+                  year: "numeric",
+                });
 
-                    <div className="text-right text-xs text-zinc-500">
-                      {plan.startDate && (
-                        <span>
-                          Active: {new Date(plan.startDate).toLocaleDateString()}
-                          {plan.endDate ? ` – ${new Date(plan.endDate).toLocaleDateString()}` : " (Ongoing)"}
-                        </span>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Exercises List */}
-                  <div className="space-y-3">
-                    <span className="text-xs font-bold text-zinc-400 uppercase tracking-wider block">
-                      Exercises ({plan.exercises.length})
-                    </span>
-
-                    {plan.exercises.length === 0 ? (
-                      <p className="text-xs text-zinc-500 italic">No specific exercises listed under this plan.</p>
-                    ) : (
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                        {plan.exercises.map((ex, idx) => (
-                          <div
-                            key={ex.id || idx}
-                            className="bg-zinc-950/80 border border-zinc-800/80 rounded-2xl p-4 flex flex-col justify-between"
+                return (
+                  <div
+                    key={plan.id}
+                    className="bg-zinc-900 border border-zinc-800 rounded-3xl p-5 sm:p-6 shadow-xl space-y-4"
+                  >
+                    {/* Header */}
+                    <div className="flex flex-col md:flex-row md:items-center justify-between gap-2 border-b border-zinc-800 pb-4">
+                      <div>
+                        <div className="flex flex-wrap items-center gap-2 mb-1">
+                          <h4 className="text-xl font-black text-white uppercase tracking-tight">
+                            {plan.title}
+                          </h4>
+                          <span
+                            className={`px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase ${
+                              plan.status === "COMPLETED"
+                                ? "bg-emerald-400/20 text-emerald-400 border border-emerald-400/30"
+                                : plan.status === "IN_PROGRESS"
+                                ? "bg-blue-400/20 text-blue-300 border border-blue-400/30"
+                                : "bg-lime-400 text-zinc-950 font-bold"
+                            }`}
                           >
-                            <div>
-                              <div className="flex items-start justify-between gap-2 mb-2">
-                                <span className="text-sm font-bold text-white flex items-center gap-2">
-                                  <span className="w-5 h-5 rounded-full bg-zinc-800 text-zinc-400 text-[10px] flex items-center justify-center font-black">
-                                    {idx + 1}
-                                  </span>
-                                  {ex.exerciseName || ex.exercise_name}
-                                </span>
-                                {(ex.dayOfWeek || ex.day_of_week) && (
-                                  <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 bg-zinc-800 text-lime-400 rounded-md">
-                                    {ex.dayOfWeek || ex.day_of_week}
-                                  </span>
-                                )}
-                              </div>
-
-                              <div className="flex items-center gap-3 text-xs text-zinc-400 mb-2">
-                                <span className="bg-zinc-900 px-2 py-1 rounded-lg border border-zinc-800 font-mono text-zinc-200">
-                                  {ex.sets} Sets × {ex.reps} Reps
-                                </span>
-                                {(ex.restSeconds || ex.rest_interval_seconds) ? (
-                                  <span className="inline-flex items-center gap-1 text-zinc-400">
-                                    <Clock className="w-3.5 h-3.5 text-zinc-500" />
-                                    {ex.restSeconds || ex.rest_interval_seconds}s Rest
-                                  </span>
-                                ) : null}
-                              </div>
-
-                              {ex.instructions && (
-                                <p className="text-xs text-zinc-400 italic bg-zinc-900/40 p-2 rounded-lg border border-zinc-800/40">
-                                  {ex.instructions}
-                                </p>
-                              )}
-                            </div>
-
-                            {ex.videoUrl && (
-                              <div className="mt-3 pt-2 border-t border-zinc-800/50">
-                                <a
-                                  href={ex.videoUrl}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="inline-flex items-center gap-1.5 text-xs text-lime-400 hover:underline"
-                                >
-                                  <VideoCamera className="w-3.5 h-3.5" />
-                                  <span>View Exercise Demo Video</span>
-                                </a>
-                              </div>
-                            )}
-                          </div>
-                        ))}
+                            {plan.status === "COMPLETED"
+                              ? "Completed"
+                              : plan.status === "IN_PROGRESS"
+                              ? "In Progress"
+                              : "Published"}
+                          </span>
+                          <span
+                            className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                              plan.isCompleted
+                                ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/30"
+                                : "bg-zinc-800 text-zinc-400 border border-zinc-700/60"
+                            }`}
+                          >
+                            Complete Workout: {plan.isCompleted ? "Yes" : "No"}
+                          </span>
+                        </div>
+                        {plan.description && (
+                          <p className="text-xs text-zinc-400 mt-1">{plan.description}</p>
+                        )}
                       </div>
-                    )}
+
+                      <div className="text-left md:text-right text-xs text-zinc-400">
+                        <span>
+                          Session Date: <strong className="text-white font-mono">{formattedDate}</strong>
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Exercises Paper Log Table */}
+                    <div className="space-y-3">
+                      <span className="text-xs font-bold text-zinc-400 uppercase tracking-wider block">
+                        Workout Exercises & Targets ({plan.exercises.length})
+                      </span>
+
+                      {plan.exercises.length === 0 ? (
+                        <p className="text-xs text-zinc-500 italic">No specific exercises listed under this plan.</p>
+                      ) : (
+                        <div className="overflow-x-auto rounded-2xl border border-zinc-800 bg-zinc-950/70">
+                          <table className="w-full text-left text-xs border-collapse">
+                            <thead>
+                              <tr className="border-b border-zinc-800 text-[10px] uppercase text-zinc-400 tracking-wider bg-zinc-900/90 font-bold">
+                                <th className="py-2.5 pl-3">Exercise</th>
+                                <th className="py-2.5 px-2">Notes / Guidance</th>
+                                <th className="py-2.5 px-2 text-center text-cyan-400">Planned Reps</th>
+                                <th className="py-2.5 px-2 text-center text-cyan-400">Planned Wt</th>
+                                <th className="py-2.5 px-2 text-center text-lime-400">Actual Reps</th>
+                                <th className="py-2.5 px-2 text-center text-lime-400">Actual Wt</th>
+                                <th className="py-2.5 pr-3 text-center">Status</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-zinc-800/60">
+                              {plan.exercises.map((ex, idx) => (
+                                <tr key={ex.id || idx} className="hover:bg-zinc-850/40">
+                                  <td className="py-3 pl-3 font-bold text-white whitespace-nowrap">
+                                    <div className="flex items-center gap-2">
+                                      <span className="w-5 h-5 rounded-full bg-zinc-800 text-zinc-400 text-[10px] flex items-center justify-center font-black shrink-0">
+                                        {idx + 1}
+                                      </span>
+                                      <span>{ex.exerciseName || ex.exercise_name}</span>
+                                    </div>
+                                    {ex.videoUrl && (
+                                      <a
+                                        href={ex.videoUrl}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="inline-flex items-center gap-1 text-[11px] text-lime-400 hover:underline mt-1 block"
+                                      >
+                                        <VideoCamera className="w-3 h-3" />
+                                        <span>Demo Video</span>
+                                      </a>
+                                    )}
+                                  </td>
+                                  <td className="py-3 px-2 text-xs text-zinc-300 italic max-w-xs">
+                                    {ex.notes || ex.instructions || "—"}
+                                  </td>
+                                  <td className="py-3 px-2 text-center font-mono font-bold text-zinc-200 bg-cyan-400/5">
+                                    {ex.plannedReps ?? ex.planned_reps ?? ex.reps ?? "—"}
+                                  </td>
+                                  <td className="py-3 px-2 text-center font-mono font-bold text-zinc-200 bg-cyan-400/5">
+                                    {ex.plannedWeightKg != null
+                                      ? `${ex.plannedWeightKg} kg`
+                                      : ex.planned_weight_kg != null
+                                      ? `${ex.planned_weight_kg} kg`
+                                      : "—"}
+                                  </td>
+                                  <td className="py-3 px-2 text-center font-mono font-bold text-lime-300 bg-lime-400/5">
+                                    {ex.actualReps != null
+                                      ? ex.actualReps
+                                      : ex.actual_reps != null
+                                      ? ex.actual_reps
+                                      : "—"}
+                                  </td>
+                                  <td className="py-3 px-2 text-center font-mono font-bold text-lime-300 bg-lime-400/5">
+                                    {ex.actualWeightKg != null
+                                      ? `${ex.actualWeightKg} kg`
+                                      : ex.actual_weight_kg != null
+                                      ? `${ex.actual_weight_kg} kg`
+                                      : "—"}
+                                  </td>
+                                  <td className="py-3 pr-3 text-center">
+                                    {ex.isCompleted || ex.is_completed ? (
+                                      <span className="inline-flex items-center gap-1 text-[11px] font-bold text-lime-400">
+                                        <CheckCircle weight="fill" className="w-3.5 h-3.5 text-lime-400" /> Done
+                                      </span>
+                                    ) : (
+                                      <span className="text-[11px] text-zinc-500 font-medium">Pending</span>
+                                    )}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>
