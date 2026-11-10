@@ -2,7 +2,7 @@ import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Plus, Trash, PencilSimple, GraduationCap, MoonStars, MusicNotes, Sparkle, Warning } from "@phosphor-icons/react";
 import { useGym, addAudit, generateId, categoryLabelOf, planAppliesToCategory } from "../context/GymContext";
-import { ACCESS_DAYS, ALL_CATEGORIES, ALL_DAYS } from "../constants";
+import { ACCESS_DAYS, ALL_DAYS } from "../constants";
 import CategoryMembers from "./CategoryMembers";
 import type { AccessRule, CustomerCategory } from "../types";
 import { toast } from "sonner";

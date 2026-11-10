@@ -6,7 +6,6 @@ import {
   Barbell,
   ForkKnife,
   CalendarCheck,
-  TrendUp,
   Plus,
   Play,
   Trash,
@@ -19,7 +18,6 @@ import {
   Sparkle,
   CheckCircle,
   Calendar,
-  Gear,
   Clock,
   Lightning,
 } from "@phosphor-icons/react";
@@ -28,10 +26,7 @@ import {
   fetchMemberWorkoutPlans,
   fetchTrainerWorkoutPlans,
   deleteWorkoutPlan,
-  updateWorkoutPlan,
-  updateWorkoutPlanStatus,
   saveDigitalWorkoutLog,
-  distributeWorkoutPlan,
   fetchMemberMealPlans,
   fetchTrainerMealPlans,
   deleteMealPlan,
@@ -44,10 +39,6 @@ import {
   fetchMemberAttendanceHistory,
   fetchTrainerPTSessions,
   recordPersonalTrainingSession,
-  fetchMemberProgressRecords,
-  fetchTrainerMemberProgress,
-  recordMemberProgress,
-  deleteMemberProgressRecord,
   getGymTodayDate,
   getGymTodayWeekday,
   fetchMemberWeeklySchedule,
@@ -59,14 +50,12 @@ import {
   type WorkoutPlanWithExercises,
   type MealPlanWithItems,
   type ExerciseVideo,
-  type MemberProgressRecord,
   type MemberAttendanceCombinedItem,
   type PersonalTrainingSessionItem,
   type WorkoutPlan,
 } from "../services/personalTrainerService";
 import type { RealTrainerProfile } from "../services/trainerProfileService";
 import type {
-  ExerciseSetRecord,
   MemberWeeklyScheduleItem,
   WeekdayName,
   ScheduledExerciseTemplate,
@@ -77,7 +66,7 @@ const INPUT =
   "w-full bg-zinc-800 border border-zinc-700 rounded-xl px-3.5 py-2 text-white placeholder:text-zinc-500 focus:outline-none focus:border-lime-400/50 transition-colors text-xs";
 const LABEL = "block text-[11px] font-bold uppercase tracking-wider text-zinc-400 mb-1";
 
-export type CoachingSection = "videos" | "workouts" | "meals" | "attendance" | "progress";
+export type CoachingSection = "videos" | "workouts" | "meals" | "attendance";
 
 // Predefined Workout Templates for 4-field structure
 const WORKOUT_TEMPLATES = [
@@ -174,7 +163,6 @@ export default function CoachingCenter({
   const [mealPlans, setMealPlans] = useState<MealPlanWithItems[]>([]);
   const [attendance, setAttendance] = useState<MemberAttendanceCombinedItem[]>([]);
   const [ptSessionsAll, setPtSessionsAll] = useState<PersonalTrainingSessionItem[]>([]);
-  const [progressRecords, setProgressRecords] = useState<MemberProgressRecord[]>([]);
 
   // Modals
   const [showVideoUploadModal, setShowVideoUploadModal] = useState(false);
@@ -185,7 +173,6 @@ export default function CoachingCenter({
   const [showMealModal, setShowMealModal] = useState(false);
   const [editingMealPlan, setEditingMealPlan] = useState<MealPlanWithItems | null>(null);
   const [showRecordSessionModal, setShowRecordSessionModal] = useState(false);
-  const [showRecordProgressModal, setShowRecordProgressModal] = useState(false);
 
   // Video Streaming Player
   const [playingVideoUrl, setPlayingVideoUrl] = useState<string | null>(null);
@@ -217,30 +204,26 @@ export default function CoachingCenter({
 
       if (scope === "individual" && selectedMemberId) {
         // Individual member focus
-        const [w, m, att, prog, sched] = await Promise.all([
+        const [w, m, att, sched] = await Promise.all([
           fetchMemberWorkoutPlans(selectedMemberId).catch(() => []),
           fetchMemberMealPlans(selectedMemberId).catch(() => []),
           fetchMemberAttendanceHistory(selectedMemberId).catch(() => []),
-          fetchMemberProgressRecords(selectedMemberId).catch(() => []),
           fetchMemberWeeklySchedule(selectedMemberId, effectiveTrainerId).catch(() => []),
         ]);
         setWorkoutPlans(w);
         setMealPlans(m);
         setAttendance(att);
-        setProgressRecords(prog);
         setMemberWeeklySchedule(sched);
       } else {
         // All members focus
-        const [w, m, ptSessions, prog] = await Promise.all([
+        const [w, m, ptSessions] = await Promise.all([
           fetchTrainerWorkoutPlans(effectiveTrainerId).catch(() => []),
           fetchTrainerMealPlans(effectiveTrainerId).catch(() => []),
           fetchTrainerPTSessions(effectiveTrainerId).catch(() => []),
-          fetchTrainerMemberProgress(effectiveTrainerId).catch(() => []),
         ]);
         setWorkoutPlans(w);
         setMealPlans(m);
         setPtSessionsAll(ptSessions);
-        setProgressRecords(prog);
       }
     } catch (err: unknown) {
       console.error("[CoachingCenter] Error loading coaching data:", err);
@@ -308,17 +291,6 @@ export default function CoachingCenter({
     }
   };
 
-  // Workout Plan Quick Publish
-  const handlePublishWorkout = async (plan: WorkoutPlanWithExercises) => {
-    try {
-      await updateWorkoutPlanStatus(plan.id, "PUBLISHED");
-      toast.success(`Workout "${plan.title}" published! Member will see this routine in their portal.`);
-      setWorkoutPlans(prev => prev.map(p => p.id === plan.id ? { ...p, status: "PUBLISHED" } : p));
-    } catch (err: unknown) {
-      toast.error((err as Error)?.message || "Failed to publish workout.");
-    }
-  };
-
   // Meal Plan Deletion
   const handleDeleteMealPlan = async (plan: MealPlanWithItems) => {
     if (!confirm(`Are you sure you want to delete meal plan "${plan.title}"?`)) return;
@@ -328,18 +300,6 @@ export default function CoachingCenter({
       setMealPlans(prev => prev.filter(p => p.id !== plan.id));
     } catch (err: unknown) {
       toast.error((err as Error)?.message || "Failed to delete meal plan.");
-    }
-  };
-
-  // Progress Record Deletion
-  const handleDeleteProgressRecord = async (recordId: string) => {
-    if (!confirm("Delete this progress record?")) return;
-    try {
-      await deleteMemberProgressRecord(recordId);
-      toast.success("Progress record deleted.");
-      setProgressRecords(prev => prev.filter(r => r.id !== recordId));
-    } catch (err: unknown) {
-      toast.error((err as Error)?.message || "Failed to delete progress record.");
     }
   };
 
@@ -378,7 +338,7 @@ export default function CoachingCenter({
               Centralized Coaching Center
             </h2>
             <p className="text-xs text-zinc-400 mt-0.5">
-              Manage exercise videos, workout routines, meal plans, attendance, and member progress from one unified workspace.
+              Manage exercise videos, workout routines, meal plans, and attendance from one unified workspace.
             </p>
           </div>
 
@@ -573,7 +533,6 @@ export default function CoachingCenter({
           <option value="workouts">Workout Plans ({workoutPlans.length})</option>
           <option value="meals">Meal Plans ({mealPlans.length})</option>
           <option value="attendance">Attendance & PT Sessions ({scope === "individual" ? attendance.length : ptSessionsAll.length})</option>
-          <option value="progress">Progress Records ({progressRecords.length})</option>
         </select>
       </div>
 
@@ -625,18 +584,6 @@ export default function CoachingCenter({
         >
           <CalendarCheck weight="bold" className="w-4 h-4 shrink-0" />
           Attendance & PT Sessions ({scope === "individual" ? attendance.length : ptSessionsAll.length})
-        </button>
-
-        <button
-          onClick={() => setSection("progress")}
-          className={`min-h-[44px] px-3.5 py-2 rounded-xl text-xs font-bold transition-colors flex items-center gap-2 whitespace-nowrap ${
-            section === "progress"
-              ? "bg-lime-400 text-zinc-950 shadow-md shadow-lime-400/10"
-              : "bg-zinc-800/60 text-zinc-400 hover:text-white"
-          }`}
-        >
-          <TrendUp weight="bold" className="w-4 h-4 shrink-0" />
-          Progress Records ({progressRecords.length})
         </button>
       </div>
 
@@ -1286,92 +1233,6 @@ export default function CoachingCenter({
               )}
             </div>
           )}
-
-          {/* SECTION 5: PROGRESS RECORDS (Simplified 4-field structure) */}
-          {section === "progress" && (
-            <div className="space-y-4">
-              <div className={`${CARD} flex flex-col sm:flex-row sm:items-center justify-between gap-3`}>
-                <div>
-                  <h3 className="text-base font-bold text-white flex items-center gap-2">
-                    <TrendUp weight="fill" className="w-5 h-5 text-lime-400" />
-                    Member Progress Records
-                  </h3>
-                  <p className="text-xs text-zinc-400">
-                    Simplified progress tracking: Weight, Strength, General Notes, and automatic Record Date.
-                  </p>
-                </div>
-
-                <button
-                  onClick={() => setShowRecordProgressModal(true)}
-                  className="bg-lime-400 hover:bg-lime-300 text-zinc-950 font-bold px-3.5 py-1.5 rounded-xl text-xs flex items-center gap-1.5 transition-colors self-start sm:self-auto"
-                >
-                  <Plus weight="bold" className="w-3.5 h-3.5" />
-                  Record Progress
-                </button>
-              </div>
-
-              {progressRecords.length === 0 ? (
-                <div className={`${CARD} py-14 text-center text-zinc-500`}>
-                  <TrendUp className="w-12 h-12 mx-auto text-zinc-700 mb-2" />
-                  <p className="text-sm font-semibold text-zinc-400">No progress milestones recorded</p>
-                  <p className="text-xs text-zinc-500 mt-1">
-                    Log member weight and strength milestones to track ongoing fitness progress.
-                  </p>
-                </div>
-              ) : (
-                <div className={`${CARD} overflow-x-auto`}>
-                  <table className="w-full text-left text-xs border-collapse">
-                    <thead>
-                      <tr className="border-b border-zinc-800 text-[10px] uppercase text-zinc-400 tracking-wider">
-                        {scope === "all" && <th className="pb-2.5 pl-2">Member</th>}
-                        <th className={`pb-2.5 ${scope === "all" ? "" : "pl-2"}`}>Record Date</th>
-                        <th className="pb-2.5">Weight</th>
-                        <th className="pb-2.5">Strength</th>
-                        <th className="pb-2.5">General Notes</th>
-                        <th className="pb-2.5 text-right pr-2">Action</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-zinc-800/40">
-                      {progressRecords.map(rec => (
-                        <tr key={rec.id} className="hover:bg-zinc-800/20">
-                          {scope === "all" && (
-                            <td className="py-3 pl-2 font-semibold text-white">
-                              {rec.customerName || "Member"} {rec.customerCode ? `(${rec.customerCode})` : ""}
-                            </td>
-                          )}
-                          <td className={`py-3 text-zinc-300 font-mono ${scope === "all" ? "" : "pl-2"}`}>
-                            {new Date(rec.recordedDate).toLocaleDateString("en-US", {
-                              month: "short",
-                              day: "numeric",
-                              year: "numeric",
-                            })}
-                          </td>
-                          <td className="py-3 text-lime-400 font-mono font-bold">
-                            {rec.weightKg ? `${rec.weightKg} kg` : "—"}
-                          </td>
-                          <td className="py-3 text-white font-medium">
-                            {rec.workoutPerformance || (rec.benchPressMaxKg ? `Bench: ${rec.benchPressMaxKg}kg` : "—")}
-                          </td>
-                          <td className="py-3 text-zinc-400 max-w-sm truncate">
-                            {rec.notes || "—"}
-                          </td>
-                          <td className="py-3 text-right pr-2">
-                            <button
-                              onClick={() => handleDeleteProgressRecord(rec.id)}
-                              className="text-red-400 hover:text-red-300 p-1 rounded hover:bg-zinc-800 transition-colors"
-                              title="Delete record"
-                            >
-                              <Trash weight="bold" className="w-4 h-4" />
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </div>
-          )}
         </>
       )}
 
@@ -1487,20 +1348,6 @@ export default function CoachingCenter({
           onClose={() => setShowRecordSessionModal(false)}
           onSaved={async () => {
             setShowRecordSessionModal(false);
-            await loadCoachingData();
-          }}
-        />
-      )}
-
-      {/* Record Member Progress Modal (Simplified) */}
-      {showRecordProgressModal && (
-        <RecordProgressModal
-          trainerId={effectiveTrainerId || ""}
-          assignedMembers={assignedMembers}
-          initialCustomerId={scope === "individual" ? selectedMemberId : null}
-          onClose={() => setShowRecordProgressModal(false)}
-          onSaved={async () => {
-            setShowRecordProgressModal(false);
             await loadCoachingData();
           }}
         />
@@ -1968,8 +1815,8 @@ function MemberWeeklyScheduleModal({
       await saveMemberWeeklySchedule(targetCustomerId, trainerId, schedule);
       toast.success("Weekly workout schedule saved successfully! Previously recorded sessions are preserved.");
       onSaved();
-    } catch (err: any) {
-      toast.error(err.message || "Failed to save weekly schedule.");
+    } catch (err: unknown) {
+      toast.error((err as Error)?.message || "Failed to save weekly schedule.");
     } finally {
       setSaving(false);
     }
@@ -2638,8 +2485,8 @@ function WorkoutSessionRecordingModal({
           : "Workout session saved and published to member!"
       );
       onSaved();
-    } catch (err: any) {
-      toast.error(err.message || "Failed to save workout session.");
+    } catch (err: unknown) {
+      toast.error((err as Error)?.message || "Failed to save workout session.");
     } finally {
       setSaving(false);
     }
@@ -3701,169 +3548,6 @@ function RecordSessionModal({
                 <Check weight="bold" className="w-4 h-4" />
               )}
               Save PT Session
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
-  );
-}
-
-// ==============================================================================
-// 5. SIMPLIFIED RECORD PROGRESS MODAL
-// 4 Fields ONLY: Weight, Strength, General Notes, Record Date (auto-generated)
-// ==============================================================================
-function RecordProgressModal({
-  trainerId,
-  assignedMembers,
-  initialCustomerId,
-  onClose,
-  onSaved,
-}: {
-  trainerId: string;
-  assignedMembers: AssignedMemberItem[];
-  initialCustomerId: string | null;
-  onClose: () => void;
-  onSaved: () => void;
-}) {
-  const [customerId, setCustomerId] = useState(
-    initialCustomerId || (assignedMembers.length > 0 ? assignedMembers[0].customer_id : "")
-  );
-  const [weight, setWeight] = useState("");
-  const [strength, setStrength] = useState("");
-  const [notes, setNotes] = useState("");
-  const [isSubmitting, setIsSubmitting] = useState(false);
-
-  // Record date is automatically generated today's date (server source of truth)
-  const todayFormatted = useMemo(() => {
-    return new Date().toLocaleDateString("en-US", {
-      month: "short",
-      day: "numeric",
-      year: "numeric",
-    });
-  }, []);
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!customerId) {
-      toast.error("Please select a member.");
-      return;
-    }
-
-    setIsSubmitting(true);
-    try {
-      await recordMemberProgress({
-        customerId,
-        trainerId,
-        weightKg: weight ? parseFloat(weight) : undefined,
-        workoutPerformance: strength.trim() || undefined,
-        notes: notes.trim() || undefined,
-      });
-      toast.success("Progress record saved successfully!");
-      onSaved();
-    } catch (err: unknown) {
-      toast.error((err as Error)?.message || "Failed to record member progress.");
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 backdrop-blur-sm p-4">
-      <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6 w-full max-w-md space-y-4">
-        <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
-          <div className="flex items-center gap-2">
-            <TrendUp weight="fill" className="w-5 h-5 text-lime-400" />
-            <h4 className="font-bold text-white text-base">Record Member Progress</h4>
-          </div>
-          <button onClick={onClose} className="p-1.5 text-zinc-400 hover:text-white rounded-lg">
-            <X weight="bold" className="w-5 h-5" />
-          </button>
-        </div>
-
-        <form onSubmit={handleSubmit} className="space-y-3">
-          <div>
-            <label className={LABEL}>Select Member *</label>
-            <select
-              value={customerId}
-              onChange={e => setCustomerId(e.target.value)}
-              className={INPUT}
-              required
-            >
-              {assignedMembers.map(m => (
-                <option key={m.id} value={m.customer_id}>
-                  {m.customer_name} ({m.customer_code})
-                </option>
-              ))}
-            </select>
-          </div>
-
-          {/* Record Date: Automatic */}
-          <div>
-            <label className={LABEL}>Record Date (Automatically Generated)</label>
-            <div className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3.5 py-2 text-lime-400 font-mono text-xs font-semibold flex items-center justify-between">
-              <span>{todayFormatted}</span>
-              <span className="text-[10px] text-zinc-500 uppercase tracking-wider">Today &bull; Auto-Logged</span>
-            </div>
-          </div>
-
-          {/* Field 1: Weight */}
-          <div>
-            <label className={LABEL}>Body Weight (kg)</label>
-            <input
-              type="number"
-              step="0.1"
-              placeholder="e.g. 74.5"
-              value={weight}
-              onChange={e => setWeight(e.target.value)}
-              className={INPUT}
-            />
-          </div>
-
-          {/* Field 2: Strength */}
-          <div>
-            <label className={LABEL}>Strength Progress / Benchmarks</label>
-            <input
-              type="text"
-              placeholder="e.g. Bench: 85kg x 3, Squat: 110kg x 5, Pull-ups: 12"
-              value={strength}
-              onChange={e => setStrength(e.target.value)}
-              className={INPUT}
-            />
-          </div>
-
-          {/* Field 3: General Notes */}
-          <div>
-            <label className={LABEL}>General Notes</label>
-            <textarea
-              rows={2}
-              placeholder="e.g. Visible conditioning gains, high energy during lifts..."
-              value={notes}
-              onChange={e => setNotes(e.target.value)}
-              className={INPUT}
-            />
-          </div>
-
-          <div className="flex gap-2 pt-2">
-            <button
-              type="button"
-              onClick={onClose}
-              disabled={isSubmitting}
-              className="flex-1 bg-zinc-800 hover:bg-zinc-700 text-white font-semibold py-2.5 rounded-xl text-xs transition-colors"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              disabled={isSubmitting}
-              className="flex-1 bg-lime-400 hover:bg-lime-300 text-zinc-950 font-bold py-2.5 rounded-xl text-xs transition-colors flex items-center justify-center gap-1.5"
-            >
-              {isSubmitting ? (
-                <div className="w-3.5 h-3.5 border-2 border-zinc-950/20 border-t-zinc-950 rounded-full animate-spin" />
-              ) : (
-                <Check weight="bold" className="w-4 h-4" />
-              )}
-              Save Progress Record
             </button>
           </div>
         </form>

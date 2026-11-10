@@ -209,7 +209,7 @@ export default function TrainerPortal() {
                 </span>
               </div>
               <p className="text-xs text-zinc-400 mt-0.5">
-                Centralized coaching workspace: exercise videos, workout plans, nutrition, attendance, and member progress.
+                Centralized coaching workspace: exercise videos, workout plans, nutrition, and attendance.
               </p>
             </div>
           </div>
